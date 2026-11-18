@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="MySched: speak your daily schedule and see it at a glance. Synced across all your devices." />
+    <meta name="theme-color" content="#03150d" />
+    <title>MySched</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='2' width='28' height='28' rx='8' fill='%237dffb3'/%3E%3Cpath d='M9 11h14M9 16h9M9 21h11' stroke='%2302150c' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700;9..144,800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <!-- Decorative theme scene: hills, pines, flowing stream, birds -->
+    <div class="scene" aria-hidden="true">
+      <svg class="hills" viewBox="0 0 1440 420" preserveAspectRatio="none">
+        <path class="hill-far" d="M0,250 C200,170 380,290 560,220 C740,150 920,270 1100,210 C1260,160 1370,230 1440,200 L1440,420 L0,420 Z" />
+        <path class="hill-mid" d="M0,300 C240,240 430,330 660,280 C880,230 1050,320 1280,270 C1360,252 1410,270 1440,262 L1440,420 L0,420 Z" />
+      </svg>
+      <svg class="pines" viewBox="0 0 1440 220" preserveAspectRatio="xMidYMax slice">
+        <g class="pine-group">
+          <polygon points="20,220 60,70 100,220" />
+          <polygon points="60,220 100,40 140,220" />
+          <polygon points="120,220 160,90 200,220" />
+          <polygon points="1240,220 1290,50 1340,220" />
+          <polygon points="1300,220 1350,95 1400,220" />
+          <polygon points="1370,220 1410,120 1440,220" />
+        </g>
+      </svg>
+      <div class="stream"></div>
+      <svg class="bird bird-1" viewBox="0 0 40 20"><path d="M0,10 Q10,0 20,10 Q30,0 40,10" /></svg>
+      <svg class="bird bird-2" viewBox="0 0 40 20"><path d="M0,10 Q10,0 20,10 Q30,0 40,10" /></svg>
+      <svg class="bird bird-3" viewBox="0 0 40 20"><path d="M0,10 Q10,0 20,10 Q30,0 40,10" /></svg>
+    </div>
+
+    <header class="topbar">
+      <div class="brand">
+        <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+          <rect x="2" y="2" width="28" height="28" rx="8" fill="currentColor" />
+          <path d="M9 11h14M9 16h9M9 21h11" stroke="#02150c" stroke-width="2.6" stroke-linecap="round" />
+        </svg>
+        <span class="wordmark"><span>My</span>Sched</span>
+      </div>
+      <div class="top-actions">
+        <button id="edit-btn" class="icon-btn" aria-label="Edit schedule" title="Edit schedule"></button>
+        <button id="add-btn" class="icon-btn" aria-label="Add to schedule" title="Add to schedule">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z"/></svg>
+        </button>
+        <div id="auth-slot"></div>
+      </div>
+    </header>
+
+    <div id="listening" class="listening" hidden>
+      <span class="pulse" aria-hidden="true"></span>
+      <span>Listening… tap the mic again when you're done.</span>
+      <span id="listening-text" class="live-text"></span>
+    </div>
+
+    <main id="app"></main>
+
+    <dialog id="capture" aria-label="Add to schedule"></dialog>
+    <dialog id="review" aria-labelledby="review-title"></dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
