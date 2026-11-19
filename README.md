@@ -4,7 +4,7 @@ A single-page web app to speak your daily schedule and see it at a glance. The l
 
 - **Sign in with Google**; your profile picture appears top-right. Click it to sign out.
 - **Mic button** (left of your picture): say your day, review it in an "Is this what you want?" panel, edit or re-speak, then **Submit**.
-- **Weekly schedules:** set one schedule for all days, for Monday to Friday, for Saturday and Sunday, or for each weekday on its own. Until you save a weekday, it uses the older weekday or weekend schedule.
+- **Weekly schedules:** set one schedule for all days, for Monday to Friday, for Saturday and Sunday, or for each weekday on its own. Saves apply from today onwards; earlier days keep what they had. Days before the app was first used show "No data is available".
 - **Specific days** (say "tomorrow …", "on Friday …", "coming Tuesday …" or "November 24th …") change only the times you mention. All other days keep their weekly schedule.
 - **Firestore** stores everything and syncs live across all your devices.
 - **Netlify** hosts the static site.
@@ -67,7 +67,9 @@ Use **Reset this day** to drop a day's changes and return to the standard schedu
 ## Data model (Firestore)
 
 ```
-users/{uid}/schedule/{sun|mon|tue|wed|thu|fri|sat}   { items: [{start, end, title, description}], updatedAt }   (one per weekday)
+users/{uid}/weekly/{dow}_{from}      { dow, from: "YYYY-MM-DD", items: [{start, end, title, description}] }   (a weekday schedule from that date on)
+users/{uid}/settings/schedule        { startDate: "YYYY-MM-DD" }   (first day in use; days before it show "No data is available")
+users/{uid}/schedule/{sun|mon|tue|wed|thu|fri|sat}   (older per-weekday schedules; fallback only)
 users/{uid}/schedule/standard        { items: [...] }   (older Mon to Fri; fallback only)
 users/{uid}/schedule/weekend         { items: [...] }   (older Sat and Sun; fallback only)
 users/{uid}/days/{YYYY-MM-DD}        { mode: "patch", changes: [{op, start, end, title, description}] }

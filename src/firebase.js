@@ -12,6 +12,7 @@ import {
   initializeFirestore,
   persistentLocalCache,
   persistentMultipleTabManager,
+  collection,
   doc,
   setDoc,
   deleteDoc,
@@ -85,17 +86,55 @@ export function watchSchedule(uid, name, onData, onError) {
   );
 }
 
-export function saveSchedule(uid, name, items) {
-  return setDoc(scheduleRef(uid, name), { items, updatedAt: serverTimestamp() });
-}
-
-/** Watches the schedule for one weekday (0 = Sunday … 6 = Saturday). */
+/** Watches the older schedule for one weekday (0 = Sunday … 6 = Saturday), used as a fallback. */
 export function watchWeekday(uid, dow, onData, onError) {
   return watchSchedule(uid, WEEKDAY_DOC[dow], onData, onError);
 }
 
-export function saveWeekday(uid, dow, items) {
-  return saveSchedule(uid, WEEKDAY_DOC[dow], items);
+/* ---------- Dated weekday versions: users/{uid}/weekly/{dow}_{from} ----------
+ * A save writes a version that starts on a date. A day uses the latest version that starts on or
+ * before it, so a save changes today and later days and leaves earlier days as they were. */
+
+export function watchWeeklyVersions(uid, onData, onError) {
+  return onSnapshot(
+    collection(db, 'users', uid, 'weekly'),
+    (snap) => onData(snap.docs.map((d) => d.data())),
+    onError,
+  );
+}
+
+/** Saves one weekday's schedule from the given date key ('YYYY-MM-DD') onwards. */
+export function saveWeekdayVersion(uid, dow, from, items) {
+  return setDoc(doc(db, 'users', uid, 'weekly', `${dow}_${from}`), {
+    dow, from, items, updatedAt: serverTimestamp(),
+  });
+}
+
+/* ---------- Start date: users/{uid}/settings/schedule { startDate } ----------
+ * The first day the schedule was used. Days before it have no data. */
+
+function startRef(uid) {
+  return doc(db, 'users', uid, 'settings', 'schedule');
+}
+
+/** Calls back with the start date key, or null when it has not been recorded yet. */
+export function watchStartDate(uid, onData, onError) {
+  return onSnapshot(
+    startRef(uid),
+    (snap) => onData(snap.exists() ? snap.data().startDate ?? null : null),
+    onError,
+  );
+}
+
+/** Records the start date, but only if none is recorded yet. */
+export function ensureStartDate(uid, startDate) {
+  const ref = startRef(uid);
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists() || !snap.data().startDate) {
+      tx.set(ref, { startDate, updatedAt: serverTimestamp() }, { merge: true });
+    }
+  });
 }
 
 export function watchStandard(uid, onData, onError) {

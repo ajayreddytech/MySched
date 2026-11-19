@@ -58,6 +58,20 @@ export function applyChanges(base, changes) {
   return sortItems(items);
 }
 
+/**
+ * The weekday schedule in force on a date (key 'YYYY-MM-DD') for one weekday (0 = Sunday).
+ * versions: [{ dow, from: 'YYYY-MM-DD', items }]. The latest version starting on or before the date wins,
+ * so changes saved on one day apply from that day on and never rewrite earlier days.
+ * Returns null when no version applies yet.
+ */
+export function scheduleVersionFor(versions, dow, key) {
+  let best = null;
+  for (const v of versions) {
+    if (v.dow === dow && v.from <= key && (!best || v.from > best.from)) best = v;
+  }
+  return best ? best.items : null;
+}
+
 /** The schedule to show for one day, with a status on each item for display. */
 export function resolveDay(standard, dayDoc) {
   const base = sortItems(standard.map(pickItem));

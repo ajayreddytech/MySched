@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveDay, mergeDayDoc, findOverlaps } from '../src/lib/schedule.js';
+import { resolveDay, mergeDayDoc, findOverlaps, scheduleVersionFor } from '../src/lib/schedule.js';
 
 const standard = [
   { start: '09:00', end: '10:00', title: 'Gym', description: '' },
@@ -76,4 +76,18 @@ test('overlapping tasks are reported', () => {
     { start: '11:00', end: '12:00', title: 'C' },
   ]);
   assert.deepEqual(pairs.map(([a, b]) => [a.title, b.title]), [['A', 'B']]);
+});
+
+test('a weekday uses the latest version that starts on or before the day', () => {
+  const versions = [
+    { dow: 1, from: '2026-11-01', items: [{ start: '08:00', title: 'Old' }] },
+    { dow: 1, from: '2026-11-20', items: [{ start: '09:00', title: 'New' }] },
+    { dow: 2, from: '2026-11-01', items: [{ start: '07:00', title: 'Tuesday' }] },
+  ];
+  assert.equal(scheduleVersionFor(versions, 1, '2026-11-19')[0].title, 'Old');
+  assert.equal(scheduleVersionFor(versions, 1, '2026-11-20')[0].title, 'New');
+  assert.equal(scheduleVersionFor(versions, 1, '2026-12-01')[0].title, 'New');
+  assert.equal(scheduleVersionFor(versions, 2, '2026-11-20')[0].title, 'Tuesday');
+  assert.equal(scheduleVersionFor(versions, 3, '2026-11-20'), null);
+  assert.equal(scheduleVersionFor(versions, 1, '2026-10-31'), null);
 });
