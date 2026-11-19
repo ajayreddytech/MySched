@@ -20,6 +20,8 @@ import {
   startOfDay,
   formatTime,
   formatDayLong,
+  formatDayMonth,
+  formatWeekday,
   isValidHHMM,
   isToday,
   toMinutes,
@@ -302,7 +304,8 @@ function navHTML(day) {
     <section class="day-nav panel">
       <button class="icon-btn" data-action="prev" aria-label="Previous day">‹</button>
       <div class="day-title">
-        <h1>${esc(formatDayLong(state.viewDate))}</h1>
+        <p class="weekday">${esc(formatWeekday(state.viewDate))}</p>
+        <h1>${esc(formatDayMonth(state.viewDate))}</h1>
       </div>
       <button class="icon-btn" data-action="next" aria-label="Next day">›</button>
       ${actions}

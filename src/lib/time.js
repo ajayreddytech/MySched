@@ -41,13 +41,28 @@ export function formatTime(hhmm) {
   return `${h % 12 || 12}:${pad(m)} ${suffix}`;
 }
 
+/** 1 -> "1st", 2 -> "2nd", 3 -> "3rd", 11 -> "11th", 18 -> "18th", 27 -> "27th" */
+export function withOrdinal(n) {
+  const lastTwo = n % 100;
+  if (lastTwo >= 11 && lastTwo <= 13) return `${n}th`;
+  const suffix = { 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th';
+  return `${n}${suffix}`;
+}
+
+/** "18th November" (no year). */
+export function formatDayMonth(d) {
+  const month = d.toLocaleDateString(undefined, { month: 'long' });
+  return `${withOrdinal(d.getDate())} ${month}`;
+}
+
+/** "Wednesday" */
+export function formatWeekday(d) {
+  return d.toLocaleDateString(undefined, { weekday: 'long' });
+}
+
+/** "Wednesday, 18th November" (no year). */
 export function formatDayLong(d) {
-  return d.toLocaleDateString(undefined, {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-  });
+  return `${formatWeekday(d)}, ${formatDayMonth(d)}`;
 }
 
 export function isToday(d) {

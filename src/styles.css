@@ -299,6 +299,12 @@ button { font: inherit; }
   gap: 12px;
 }
 .day-title { text-align: center; min-width: 0; }
+.day-title .weekday {
+  margin: 0 0 2px;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--mint);
+}
 .nav-actions { grid-column: 1 / -1; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
 
 /* ---------- Timeline: times on the left, one continuous line, tasks on the right ---------- */
