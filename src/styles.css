@@ -759,9 +759,10 @@ fieldset.apply legend { padding: 0 6px; font-weight: 700; color: var(--mint); }
 
   /* Phone editor: wide enough for both times, and the rows fit the screen. */
   .timeline.editing-list { width: 100%; }
-  .slot.editing { grid-template-columns: 112px 18px minmax(0, 200px); }
-  .slot.editing .time-edit { padding: 12px 6px 12px 0; }
-  .slot.editing .time-edit input { padding: 8px 4px 8px 8px; font-size: 0.9rem; }
+  .slot.editing { grid-template-columns: max-content 18px minmax(0, 200px); }
+  .slot.editing .time-edit { justify-items: start; padding: 12px 6px 12px 0; }
+  .slot.editing .time-edit input { width: auto; padding: 8px 6px; font-size: 0.9rem; }
+  .slot.editing .time-edit .to { justify-self: center; }
 
   .topbar { padding-top: calc(10px + env(safe-area-inset-top, 0px)); }
 }
