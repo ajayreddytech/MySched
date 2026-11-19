@@ -65,6 +65,12 @@ export function formatDayLong(d) {
   return `${formatWeekday(d)}, ${formatDayMonth(d)}`;
 }
 
+/** Saturday and Sunday. */
+export function isWeekend(d) {
+  const day = d.getDay();
+  return day === 0 || day === 6;
+}
+
 export function isToday(d) {
   return dateKey(d) === dateKey(new Date());
 }

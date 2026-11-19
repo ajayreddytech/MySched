@@ -4,10 +4,11 @@ A single-page web app to speak your daily schedule and see it at a glance. The l
 
 - **Sign in with Google**; your profile picture appears top-right. Click it to sign out.
 - **Mic button** (left of your picture): say your day, review it in an "Is this what you want?" panel, edit or re-speak, then **Submit**.
-- **Standard schedule** applies to every day.
-- **Day changes** (say "tomorrow …" or "on Friday …") change only the times you mention. All other days keep the standard schedule.
+- **Weekday schedule** (Monday to Friday) and **weekend schedule** (Saturday and Sunday). Until you save a weekend schedule, weekends use the weekday one.
+- **Day changes** (say "tomorrow …" or "on Friday …") change only the times you mention. All other days keep their weekday or weekend schedule.
 - **Firestore** stores everything and syncs live across all your devices.
 - **Netlify** hosts the static site.
+- **Installable app:** on a phone, use Add to Home Screen (or the install prompt). It opens full screen like a native app. On a phone signed in, the top-right menu holds Profile, Edit schedule, Add to schedule and Sign out.
 
 Stack: Vite, vanilla JavaScript, Firebase Auth (Google), Cloud Firestore, Web Speech API.
 
@@ -53,7 +54,7 @@ The parser understands these patterns:
 Speak with pauses between tasks. Each time range starts a new task, and the review panel lets you fix anything the parser got wrong.
 
 **Apply as** in the review panel chooses how the result is saved:
-- *Standard schedule*: replaces every day's standard schedule.
+- *Every weekday (Monday to Friday)* or *Every weekend day (Saturday and Sunday)*: replaces that standard schedule.
 - *Only change these times on one day*: keeps the standard schedule and changes only the listed times.
 - *Replace the whole day*: that day shows only the tasks you list.
 
@@ -64,7 +65,8 @@ Use **Reset this day** to drop a day's changes and return to the standard schedu
 ## Data model (Firestore)
 
 ```
-users/{uid}/schedule/standard        { items: [{start, end, title, description}], updatedAt }
+users/{uid}/schedule/standard        { items: [{start, end, title, description}], updatedAt }   (Mon to Fri)
+users/{uid}/schedule/weekend         { items: [{start, end, title, description}], updatedAt }   (Sat and Sun; absent = use standard)
 users/{uid}/days/{YYYY-MM-DD}        { mode: "patch", changes: [{op, start, end, title, description}] }
                                   or { mode: "full",  items: [...] }
 ```

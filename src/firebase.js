@@ -15,6 +15,7 @@ import {
   doc,
   setDoc,
   deleteDoc,
+  getDoc,
   onSnapshot,
   runTransaction,
   serverTimestamp,
@@ -62,7 +63,7 @@ export function signOutUser() {
   return signOut(auth);
 }
 
-/* ---------- Standard schedule: users/{uid}/schedule/standard ---------- */
+/* ---------- Weekday schedule: users/{uid}/schedule/standard (Monday to Friday) ---------- */
 
 function standardRef(uid) {
   return doc(db, 'users', uid, 'schedule', 'standard');
@@ -78,6 +79,47 @@ export function watchStandard(uid, onData, onError) {
 
 export function saveStandard(uid, items) {
   return setDoc(standardRef(uid), { items, updatedAt: serverTimestamp() });
+}
+
+/* ---------- Named schedules: users/{uid}/schedule/{name} ----------
+ * standard = Monday to Friday, saturday, sunday, and weekend (an older combined Saturday and Sunday,
+ * used only as a fallback until Saturday and Sunday have their own). */
+
+function scheduleRef(uid, name) {
+  return doc(db, 'users', uid, 'schedule', name);
+}
+
+/** Calls back with the items, or null when that schedule has not been saved yet. */
+export function watchSchedule(uid, name, onData, onError) {
+  return onSnapshot(
+    scheduleRef(uid, name),
+    (snap) => onData(snap.exists() ? snap.data().items || [] : null),
+    onError,
+  );
+}
+
+export function saveSchedule(uid, name, items) {
+  return setDoc(scheduleRef(uid, name), { items, updatedAt: serverTimestamp() });
+}
+
+export function watchWeekend(uid, onData, onError) {
+  return watchSchedule(uid, 'weekend', onData, onError);
+}
+
+export function watchSaturday(uid, onData, onError) {
+  return watchSchedule(uid, 'saturday', onData, onError);
+}
+
+export function watchSunday(uid, onData, onError) {
+  return watchSchedule(uid, 'sunday', onData, onError);
+}
+
+export function saveSaturday(uid, items) {
+  return saveSchedule(uid, 'saturday', items);
+}
+
+export function saveSunday(uid, items) {
+  return saveSchedule(uid, 'sunday', items);
 }
 
 /* ---------- Day overrides: users/{uid}/days/{YYYY-MM-DD} ---------- */
@@ -103,6 +145,12 @@ export function saveDayChanges(uid, key, mode, rows) {
     const next = mergeDayDoc(existing, mode, rows);
     tx.set(ref, { ...next, updatedAt: serverTimestamp() });
   });
+}
+
+/** Reads one day's override once (used by the editor's special-day picker). */
+export async function loadDay(uid, key) {
+  const snap = await getDoc(dayRef(uid, key));
+  return snap.exists() ? snap.data() : null;
 }
 
 /** Replaces one whole day with the given list (used by the in-place editor). */

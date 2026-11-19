@@ -2,9 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="description" content="MySched: speak your daily schedule and see it at a glance. Synced across all your devices." />
     <meta name="theme-color" content="#03150d" />
+    <!-- Installable app: opens full screen with no browser bars (see public/manifest.webmanifest). -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="MySched" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>MySched</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='2' width='28' height='28' rx='8' fill='%237dffb3'/%3E%3Cpath d='M9 11h14M9 16h9M9 21h11' stroke='%2302150c' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -43,11 +50,28 @@
         <span class="wordmark"><span>My</span>Sched</span>
       </div>
       <div class="top-actions">
-        <button id="edit-btn" class="icon-btn" aria-label="Edit schedule" title="Edit schedule"></button>
-        <button id="add-btn" class="icon-btn" aria-label="Add to schedule" title="Add to schedule">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z"/></svg>
-        </button>
         <div id="auth-slot"></div>
+        <!-- Shown once signed in, at every screen size (see styles.css). -->
+        <div id="menu" class="menu">
+          <button id="menu-btn" class="icon-btn" data-action="menu-toggle" aria-label="Open menu" aria-haspopup="true" aria-expanded="false" aria-controls="menu-panel" title="Menu">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 6h18v2H3V6Zm0 5h18v2H3v-2Zm0 5h18v2H3v-2Z"/></svg>
+          </button>
+          <div id="menu-panel" class="menu-panel" role="menu" hidden>
+            <div id="menu-profile" class="menu-profile"></div>
+            <button class="menu-item" role="menuitem" data-action="menu-edit">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25Zm17.71-10.21a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"/></svg>
+              <span id="menu-edit-label">Edit schedule</span>
+            </button>
+            <button class="menu-item" role="menuitem" data-action="menu-add">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z"/></svg>
+              <span>Add to schedule</span>
+            </button>
+            <button class="menu-item danger" role="menuitem" data-action="signout">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M10.09 15.59 11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67l-2.58 2.59ZM19 3H5a2 2 0 0 0-2 2v4h2V5h14v14H5v-4H3v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Z"/></svg>
+              <span>Sign out</span>
+            </button>
+          </div>
+        </div>
       </div>
     </header>
 

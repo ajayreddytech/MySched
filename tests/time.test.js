@@ -17,3 +17,11 @@ test('ordinal suffixes', () => {
   assert.equal(withOrdinal(27), '27th');
   assert.equal(withOrdinal(31), '31st');
 });
+
+test('weekend is Saturday and Sunday only', async () => {
+  const { isWeekend } = await import('../src/lib/time.js');
+  assert.equal(isWeekend(new Date(2026, 10, 13)), false); // Friday
+  assert.equal(isWeekend(new Date(2026, 10, 14)), true); // Saturday
+  assert.equal(isWeekend(new Date(2026, 10, 15)), true); // Sunday
+  assert.equal(isWeekend(new Date(2026, 10, 16)), false); // Monday
+});

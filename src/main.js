@@ -5,10 +5,17 @@ import {
   signInWithGoogle,
   signOutUser,
   watchStandard,
+  watchWeekend,
+  watchSaturday,
+  watchSunday,
   watchDay,
   saveStandard,
+  saveSchedule,
+  saveSaturday,
+  saveSunday,
   saveDayChanges,
   saveDayFull,
+  loadDay,
   deleteDayOverride,
 } from './firebase.js';
 import { parseSpeech } from './lib/parser.js';
@@ -24,6 +31,7 @@ import {
   formatWeekday,
   isValidHHMM,
   isToday,
+  isWeekend,
   toMinutes,
 } from './lib/time.js';
 
@@ -35,9 +43,11 @@ const esc = (v) =>
 
 const app = $('#app');
 const dialog = $('#review');
-const addBtn = $('#add-btn');
 const captureDialog = $('#capture');
 const authSlot = $('#auth-slot');
+const menuEl = $('#menu');
+const menuPanel = $('#menu-panel');
+const menuBtn = $('#menu-btn');
 const toastEl = $('#toast');
 const listeningBar = $('#listening');
 const listeningText = $('#listening-text');
@@ -46,15 +56,19 @@ const SpeechAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
 const MIC_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg>`;
 
 // Must be declared before the boot code below, which calls render().
-const EDIT_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25Zm17.71-10.21a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"/></svg>`;
-const SAVE_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17Z"/></svg>`;
 
 const state = {
   user: undefined, // undefined = checking, null = signed out, object = signed in
-  standard: null, // null = loading; array of standard items
+  standard: null, // null = loading; array of weekday (Mon to Fri) items
+  weekend: undefined, // older combined Saturday and Sunday schedule: undefined = loading; null = none; array = items
+  saturday: undefined, // undefined = loading; null = not saved yet (older weekend or Monday to Friday is used); array = items
+  sunday: undefined, // same as saturday
   dayDoc: undefined, // undefined = loading; null = no override; object = override
   viewDate: startOfDay(),
   unsubStandard: null,
+  unsubWeekend: null,
+  unsubSaturday: null,
+  unsubSunday: null,
   unsubDay: null,
   recognizer: null,
   draft: null, // review dialog state
@@ -67,7 +81,6 @@ const state = {
 
 if (!configured) {
   app.innerHTML = setupHTML();
-  addBtn.disabled = true;
 } else {
   watchAuth((user) => {
     state.user = user;
@@ -85,10 +98,19 @@ if (!configured) {
 
 function subscribe() {
   state.unsubStandard?.();
+  state.unsubWeekend?.();
+  state.unsubSaturday?.();
+  state.unsubSunday?.();
   state.unsubDay?.();
   state.standard = null;
+  state.weekend = undefined;
+  state.saturday = undefined;
+  state.sunday = undefined;
   state.dayDoc = undefined;
   state.unsubStandard = null;
+  state.unsubWeekend = null;
+  state.unsubSaturday = null;
+  state.unsubSunday = null;
   state.unsubDay = null;
   if (!state.user) return;
   state.unsubStandard = watchStandard(
@@ -96,7 +118,36 @@ function subscribe() {
     (items) => { state.standard = items; render(); },
     fail,
   );
+  state.unsubWeekend = watchWeekend(
+    state.user.uid,
+    (items) => { state.weekend = items; render(); },
+    fail,
+  );
+  state.unsubSaturday = watchSaturday(
+    state.user.uid,
+    (items) => { state.saturday = items; render(); },
+    fail,
+  );
+  state.unsubSunday = watchSunday(
+    state.user.uid,
+    (items) => { state.sunday = items; render(); },
+    fail,
+  );
   subscribeDay();
+}
+
+/** The standard schedule for a date: Saturday and Sunday use the weekend one once it exists. */
+function baseFor(date) {
+  const day = date.getDay();
+  const own = day === 6 ? state.saturday : day === 0 ? state.sunday : null;
+  if (own) return own;
+  if (isWeekend(date) && state.weekend) return state.weekend;
+  return state.standard;
+}
+
+function scheduleLoading() {
+  return state.standard === null || state.weekend === undefined
+    || state.saturday === undefined || state.sunday === undefined || state.dayDoc === undefined;
 }
 
 function subscribeDay() {
@@ -117,22 +168,34 @@ function subscribeDay() {
 function render() {
   renderAuth();
   renderMain();
-  renderEditButton();
+  renderMenuEditLabel();
+}
+
+function avatarHTML(u) {
+  if (u.photoURL) return `<img src="${esc(u.photoURL)}" alt="" referrerpolicy="no-referrer" />`;
+  const name = u.displayName || u.email || 'Account';
+  return `<span>${esc(name.charAt(0).toUpperCase())}</span>`;
 }
 
 function renderAuth() {
   const u = state.user;
+  document.body.classList.toggle('signed-in', Boolean(u));
   if (u === undefined) {
     authSlot.innerHTML = '';
   } else if (u === null) {
     authSlot.innerHTML = `<button class="link-btn" data-action="signin"><span class="long">Sign in with Google</span><span class="short">Sign in</span></button>`;
   } else {
     const name = u.displayName || u.email || 'Account';
-    const initial = esc(name.charAt(0).toUpperCase());
-    const avatar = u.photoURL
-      ? `<img src="${esc(u.photoURL)}" alt="" referrerpolicy="no-referrer" />`
-      : `<span>${initial}</span>`;
-    authSlot.innerHTML = `<button class="avatar-btn" data-action="signout" title="Sign out" aria-label="Signed in as ${esc(name)}. Click to sign out">${avatar}</button>`;
+    authSlot.innerHTML = `<button class="avatar-btn" data-action="signout" title="Sign out" aria-label="Signed in as ${esc(name)}. Click to sign out">${avatarHTML(u)}</button>`;
+  }
+  // Phone menu (the top bar shows it only on small screens): profile details at the top.
+  const profile = $('#menu-profile');
+  if (u) {
+    const name = u.displayName || u.email || 'Account';
+    const email = u.email && u.email !== name ? `<small>${esc(u.email)}</small>` : '';
+    profile.innerHTML = `<span class="avatar">${avatarHTML(u)}</span><span class="menu-name"><strong>${esc(name)}</strong>${email}</span>`;
+  } else {
+    profile.innerHTML = '';
   }
 }
 
@@ -146,7 +209,7 @@ function renderMain() {
     app.innerHTML = heroHTML();
     return;
   }
-  if (state.standard === null || state.dayDoc === undefined) {
+  if (scheduleLoading()) {
     app.innerHTML = navHTML(null) + `<p class="panel center">Loading your schedule…</p>`;
     return;
   }
@@ -154,36 +217,44 @@ function renderMain() {
     app.innerHTML = navHTML(null) + editorHTML(state.edit);
     return;
   }
-  const day = resolveDay(state.standard, state.dayDoc);
+  const day = resolveDay(baseFor(state.viewDate), state.dayDoc);
   const now = new Date();
   const nowMin = now.getHours() * 60 + now.getMinutes();
   app.innerHTML = navHTML(day) + timelineHTML(day.items, isToday(state.viewDate), nowMin);
 }
 
-/* ---------- In-place editor ---------- */
+/* ---------- In-place editor: Monday to Friday, Saturday, Sunday, or one special day ---------- */
 
-function renderEditButton() {
-  const btn = $('#edit-btn');
-  if (!btn) return;
-  const editing = Boolean(state.edit);
-  btn.classList.toggle('editing', editing);
-  btn.innerHTML = editing ? SAVE_ICON : EDIT_ICON;
-  btn.setAttribute('aria-label', editing ? 'Save schedule' : 'Edit schedule');
-  btn.title = editing ? 'Save schedule' : 'Edit schedule';
-  btn.disabled = !configured || state.user === undefined;
+// state.edit = { kind: 'weekday' | 'saturday' | 'sunday' | 'day', date: 'YYYY-MM-DD', drafts, loading }
+// A draft = { items, original } where original is the normalised starting list, used to tell what changed.
+
+const KIND_LABEL = { weekday: 'Monday to Friday', saturday: 'Saturday', sunday: 'Sunday' };
+const KIND_DOC = { weekday: 'standard', saturday: 'saturday', sunday: 'sunday' };
+
+const draftKey = (e) => (e.kind === 'day' ? `day:${e.date}` : e.kind);
+const currentDraft = () => (state.edit ? state.edit.drafts[draftKey(state.edit)] : null);
+const normItems = (items) => JSON.stringify(sortItems(items.map(pickItem)));
+const makeDraft = (items) => ({ items, original: normItems(items) });
+
+/** The schedule a kind starts from: its own saved one, else the older weekend one, else Monday to Friday. */
+function startingItems(kind) {
+  if (kind === 'weekday') return state.standard;
+  const own = kind === 'saturday' ? state.saturday : state.sunday;
+  return own ?? state.weekend ?? state.standard;
 }
 
-/** Starts editing the day on screen (or stops and saves if already editing). */
+function renderMenuEditLabel() {
+  const label = $('#menu-edit-label');
+  if (label) label.textContent = state.edit ? 'Save schedules' : 'Edit schedules';
+}
+
+/** Opens the editor (or saves if it is already open). */
 function toggleEdit() {
   if (!state.user) return toast('Sign in with Google first.');
   if (state.edit) return saveEdit();
-  if (state.standard === null || state.dayDoc === undefined) return toast('Still loading your schedule…');
-  const day = resolveDay(state.standard, state.dayDoc);
-  state.edit = {
-    items: day.items.map(pickItem),
-    // Editing a day with its own changes defaults to that day; a standard day defaults to every day.
-    applyTo: day.custom ? 'day' : 'standard',
-  };
+  if (scheduleLoading()) return toast('Still loading your schedule…');
+  state.edit = { kind: 'weekday', date: dateKey(state.viewDate), drafts: {}, loading: null };
+  ensureDraft();
   render();
 }
 
@@ -193,84 +264,166 @@ function discardEdit() {
   toast('Edits discarded.');
 }
 
-function editorHTML(e) {
-  const dayText = formatDayLong(state.viewDate);
-  const rows = e.items.map((it, i) => `
+/** Makes sure the chosen schedule has a draft; a special day is read from Firestore first. */
+function ensureDraft() {
+  const e = state.edit;
+  if (!e) return;
+  const key = draftKey(e);
+  if (e.drafts[key]) return;
+  if (e.kind === 'day') {
+    loadDayDraft(e, key);
+  } else {
+    e.drafts[key] = makeDraft(startingItems(e.kind).map(pickItem));
+  }
+}
+
+async function loadDayDraft(e, key) {
+  if (!state.user || e.loading === key) return;
+  e.loading = key;
+  render();
+  try {
+    const dayDoc = await loadDay(state.user.uid, e.date);
+    if (state.edit !== e) return; // editor was closed meanwhile
+    const day = resolveDay(baseFor(parseDateKey(e.date)), dayDoc);
+    e.drafts[key] = makeDraft(day.items.map(pickItem));
+  } catch (err) {
+    fail(err);
+  } finally {
+    if (e.loading === key) e.loading = null;
+    render();
+  }
+}
+
+function scheduleEditorHTML(title, items) {
+  const rows = items.map((it, i) => `
     <li class="slot editing">
       <div class="time-edit">
-        <input type="time" data-idx="${i}" data-f="start" value="${esc(it.start)}" aria-label="Start time" />
+        <input type="time" data-idx="${i}" data-f="start" value="${esc(it.start)}" aria-label="Task ${i + 1} start time" />
         <span class="to">to</span>
-        <input type="time" data-idx="${i}" data-f="end" value="${it.end && it.end !== it.start ? esc(it.end) : ''}" aria-label="End time (leave blank for start only)" title="Leave blank for a start-only task" />
+        <input type="time" data-idx="${i}" data-f="end" value="${it.end && it.end !== it.start ? esc(it.end) : ''}" aria-label="Task ${i + 1} end time (leave blank for start only)" title="Leave blank for a start-only task" />
       </div>
       <div class="spine" aria-hidden="true"><span class="dot"></span></div>
       <article class="task edit-card">
-        <input type="text" data-idx="${i}" data-f="title" value="${esc(it.title)}" placeholder="Task name" aria-label="Task name" />
-        <textarea rows="2" data-idx="${i}" data-f="description" placeholder="Notes (optional)" aria-label="Notes">${esc(it.description)}</textarea>
+        <input type="text" data-idx="${i}" data-f="title" value="${esc(it.title)}" placeholder="Task name" aria-label="Task ${i + 1} name" />
+        <textarea rows="2" data-idx="${i}" data-f="description" placeholder="Notes (optional)" aria-label="Task ${i + 1} notes">${esc(it.description)}</textarea>
         <button class="ghost small danger" data-action="edit-del" data-idx="${i}">Remove task</button>
       </article>
     </li>`).join('');
   return `
-    <section class="editor-bar panel">
-      <div>
-        <p class="eyebrow">Editing</p>
-        <h1>${esc(dayText)}</h1>
-      </div>
-      <label class="field scope">
-        <span>Apply changes to</span>
-        <select data-action="edit-scope" aria-label="Apply changes to">
-          <option value="day" ${e.applyTo === 'day' ? 'selected' : ''}>This day only</option>
-          <option value="standard" ${e.applyTo === 'standard' ? 'selected' : ''}>Every day (standard schedule)</option>
-        </select>
-      </label>
-    </section>
-    <ol class="timeline editing-list" aria-label="Edit schedule">
-      ${rows || '<li class="panel center empty">No tasks. Add one below.</li>'}
-    </ol>
-    <div class="editor-actions">
+    <section class="schedule-edit panel" aria-label="${esc(title)}">
+      <header class="schedule-edit-head">
+        <h2>${esc(title)}</h2>
+      </header>
+      <ol class="timeline editing-list">
+        ${rows || '<li class="empty center">No tasks yet. Add one below.</li>'}
+      </ol>
       <button class="ghost" data-action="edit-add">+ Add task</button>
+    </section>`;
+}
+
+function editorHTML(e) {
+  const isDay = e.kind === 'day';
+  const options = [
+    ['weekday', KIND_LABEL.weekday],
+    ['saturday', KIND_LABEL.saturday],
+    ['sunday', KIND_LABEL.sunday],
+    ['day', 'Special day'],
+  ];
+  const draft = currentDraft();
+  let body;
+  if (!draft) {
+    body = `<p class="panel center empty">Loading…</p>`;
+  } else {
+    const title = isDay ? `Special day: ${formatDayLong(parseDateKey(e.date))}` : KIND_LABEL[e.kind];
+    body = scheduleEditorHTML(title, draft.items);
+  }
+  return `
+    <section class="editor-bar panel">
+      <div class="editor-pick">
+        <p class="eyebrow">Editing</p>
+        <label class="field scope">
+          <span>Schedule</span>
+          <select data-action="edit-kind" aria-label="Schedule to edit">
+            ${options.map(([v, label]) => `<option value="${v}" ${e.kind === v ? 'selected' : ''}>${label}</option>`).join('')}
+          </select>
+        </label>
+        ${isDay ? `
+        <label class="field scope">
+          <span>Day</span>
+          <input type="date" data-action="edit-date" value="${esc(e.date)}" aria-label="Special day" />
+        </label>` : ''}
+      </div>
+    </section>
+    ${body}
+    <div class="editor-actions">
       <span class="spacer"></span>
       <button class="ghost" data-action="edit-discard">Discard</button>
-      <button class="primary" data-action="edit-save">Save schedule</button>
+      <button class="primary" data-action="edit-save">Save schedules</button>
     </div>`;
 }
 
-function editErrors(items) {
+function editErrors(items, label) {
   const errors = [];
   items.forEach((it, i) => {
     const n = i + 1;
-    if (!isValidHHMM(it.start)) errors.push(`Task ${n}: set a start time.`);
+    if (!isValidHHMM(it.start)) errors.push(`${label}, task ${n}: set a start time.`);
     // An end earlier than the start is an overnight task (e.g. 11 pm to 7 am), which is allowed.
     const end = it.end || it.start;
-    if (!isValidHHMM(end)) errors.push(`Task ${n}: set a valid end time.`);
-    if (!(it.title || '').trim()) errors.push(`Task ${n}: give it a name.`);
+    if (!isValidHHMM(end)) errors.push(`${label}, task ${n}: set a valid end time.`);
+    if (!(it.title || '').trim()) errors.push(`${label}, task ${n}: give it a name.`);
   });
   return errors;
+}
+
+function draftLabel(key) {
+  if (key.startsWith('day:')) return formatDayLong(parseDateKey(key.slice(4)));
+  return KIND_LABEL[key];
 }
 
 async function saveEdit() {
   const e = state.edit;
   if (!e || state.busy) return;
-  const errors = editErrors(e.items);
+  if (e.loading) return toast('Still loading that day…');
+  // Only schedules that were actually changed are saved.
+  const changed = Object.entries(e.drafts).filter(([, d]) => normItems(d.items) !== d.original);
+  if (!changed.length) {
+    state.edit = null;
+    render();
+    return toast('No changes to save.');
+  }
+  const errors = changed.flatMap(([key, d]) => editErrors(d.items, draftLabel(key)));
   if (errors.length) return toast(errors[0]);
   if (!state.user) return toast('Sign in first.');
 
-  const items = sortItems(e.items.map(pickItem));
   state.busy = true;
   try {
-    if (e.applyTo === 'standard') {
-      await saveStandard(state.user.uid, items);
-      toast('Standard schedule saved. Days with their own changes keep those.');
-    } else {
-      await saveDayFull(state.user.uid, dateKey(state.viewDate), items);
-      toast('Saved for this day.');
+    const uid = state.user.uid;
+    for (const [key, d] of changed) {
+      const items = sortItems(d.items.map(pickItem));
+      if (key.startsWith('day:')) await saveDayFull(uid, key.slice(4), items);
+      else await saveSchedule(uid, KIND_DOC[key], items);
     }
     state.edit = null;
     render();
+    toast(`Saved ${changed.map(([k]) => draftLabel(k)).join(', ')}.`);
   } catch (err) {
     fail(err);
   } finally {
     state.busy = false;
   }
+}
+
+/** Dropdown or date changed in the editor. */
+function editorPicked(field, value) {
+  const e = state.edit;
+  if (!e) return;
+  if (field === 'kind') e.kind = value === 'day' ? 'day' : value;
+  if (field === 'date') {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return;
+    e.date = value;
+  }
+  ensureDraft();
+  render();
 }
 
 function heroHTML() {
@@ -563,6 +716,9 @@ function respeak() {
 
 /* ---------- Review dialog ("Is this what you want?") ---------- */
 
+/** Modes that change a standard schedule (every weekday or every weekend day), not one date. */
+const isStandardMode = (mode) => ['standard', 'saturday', 'sunday'].includes(mode);
+
 function draftFromText(transcript) {
   const parsed = parseSpeech(transcript, { today: new Date() });
   return {
@@ -589,7 +745,7 @@ function reparseDraft() {
 function validate(d) {
   const errors = [];
   const items = [];
-  if (d.mode !== 'standard' && !/^\d{4}-\d{2}-\d{2}$/.test(d.date || '')) {
+  if (!isStandardMode(d.mode) && !/^\d{4}-\d{2}-\d{2}$/.test(d.date || '')) {
     errors.push('Pick a valid day.');
   }
   d.rows.forEach((r, i) => {
@@ -599,7 +755,7 @@ function validate(d) {
       return;
     }
     if (r.op === 'remove') {
-      if (d.mode === 'standard') {
+      if (isStandardMode(d.mode)) {
         errors.push(`Task ${n}: removing a task only works for one day. Choose "Only change these times" or "Replace the whole day".`);
       } else if (d.mode === 'day-patch') {
         items.push({ op: 'remove', start: r.start, end: r.end || r.start, title: r.title, description: '' });
@@ -620,10 +776,10 @@ function validate(d) {
 function previewItems(d) {
   const { items } = validate({ ...d, showErrors: false });
   const setRows = items.filter((r) => r.op === 'set');
-  if (d.mode === 'standard') return setRows.map(pickItem);
+  if (isStandardMode(d.mode)) return setRows.map(pickItem);
   const sameDay = state.dayDoc && d.date === dateKey(state.viewDate);
   const merged = mergeDayDoc(sameDay ? state.dayDoc : null, d.mode, items);
-  return merged.mode === 'full' ? merged.items : applyChanges(state.standard || [], merged.changes);
+  return merged.mode === 'full' ? merged.items : applyChanges(baseFor(parseDateKey(d.date)), merged.changes);
 }
 
 function warningsHTML(d) {
@@ -660,7 +816,7 @@ function rowHTML(r, i) {
 function renderReview() {
   const d = state.draft;
   if (!d) return;
-  const isDay = d.mode !== 'standard';
+  const isDay = !isStandardMode(d.mode);
   const dayLabel = isDay ? formatDayLong(parseDateKey(d.date)) : '';
   dialog.innerHTML = `
     <div class="review">
@@ -678,7 +834,9 @@ function renderReview() {
       </div>
       <fieldset class="apply">
         <legend>Apply as</legend>
-        ${radio('standard', 'Standard schedule (every day)', d.mode)}
+        ${radio('standard', 'Monday to Friday', d.mode)}
+        ${radio('saturday', 'Saturday', d.mode)}
+        ${radio('sunday', 'Sunday', d.mode)}
         ${radio('day-patch', 'Only change these times on one day', d.mode)}
         ${radio('day-full', 'Replace the whole day', d.mode)}
       </fieldset>
@@ -722,15 +880,22 @@ async function submitDraft() {
   state.busy = true;
   try {
     const uid = state.user.uid;
+    const standardItems = sortItems(items.map(pickItem));
     if (d.mode === 'standard') {
-      await saveStandard(uid, sortItems(items.map(pickItem)));
+      await saveStandard(uid, standardItems);
+    } else if (d.mode === 'saturday') {
+      await saveSaturday(uid, standardItems);
+    } else if (d.mode === 'sunday') {
+      await saveSunday(uid, standardItems);
     } else {
       await saveDayChanges(uid, d.date, d.mode, items);
     }
     dialog.close();
     state.draft = null;
     if (d.mode === 'standard') {
-      toast('Standard schedule saved. It applies to every day without a custom change.');
+      toast('Monday to Friday schedule saved. It applies to every weekday without a custom change.');
+    } else if (isStandardMode(d.mode)) {
+      toast(`${d.mode === 'saturday' ? 'Saturday' : 'Sunday'} schedule saved. It applies to every ${d.mode} without a custom change.`);
     } else {
       const target = parseDateKey(d.date);
       if (dateKey(target) !== dateKey(state.viewDate)) setViewDate(target);
@@ -745,9 +910,27 @@ async function submitDraft() {
 
 /* ---------- Event wiring ---------- */
 
+/* Phone menu: the top bar's edit, add and account buttons move into it on small screens. */
+function setMenu(open) {
+  menuPanel.hidden = !open;
+  menuBtn.setAttribute('aria-expanded', String(open));
+}
+
 const handlers = {
   signin: () => signIn(),
-  signout: () => signOutUser().then(() => toast('Signed out.')).catch(fail),
+  signout: () => {
+    setMenu(false);
+    return signOutUser().then(() => toast('Signed out.')).catch(fail);
+  },
+  'menu-toggle': () => setMenu(menuPanel.hidden),
+  'menu-edit': () => {
+    setMenu(false);
+    toggleEdit();
+  },
+  'menu-add': () => {
+    setMenu(false);
+    openCapture();
+  },
   prev: () => setViewDate(addDays(state.viewDate, -1)),
   next: () => setViewDate(addDays(state.viewDate, 1)),
   today: () => setViewDate(new Date()),
@@ -763,12 +946,12 @@ const handlers = {
   },
   'edit-save': () => toggleEdit(),
   'edit-discard': () => discardEdit(),
-  'edit-add': () => {
-    state.edit.items.push({ start: '09:00', end: '10:00', title: '', description: '' });
+  'edit-add': (el) => {
+    currentDraft()?.items.push({ start: '09:00', end: '10:00', title: '', description: '' });
     render();
   },
   'edit-del': (el) => {
-    state.edit.items.splice(Number(el.dataset.idx), 1);
+    currentDraft()?.items.splice(Number(el.dataset.idx), 1);
     render();
   },
   'rv-speak': () => respeak(),
@@ -780,9 +963,17 @@ const handlers = {
 };
 
 document.addEventListener('click', (e) => {
+  if (!menuEl.contains(e.target)) setMenu(false);
   const el = e.target.closest('[data-action]');
   if (!el) return;
   handlers[el.dataset.action]?.(el, e);
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !menuPanel.hidden) {
+    setMenu(false);
+    menuBtn.focus();
+  }
 });
 
 dialog.addEventListener('input', (e) => {
@@ -818,8 +1009,6 @@ dialog.addEventListener('close', () => {
   state.draft = null;
 });
 
-addBtn.addEventListener('click', () => openCapture());
-
 captureDialog.addEventListener('input', (e) => {
   if (e.target.id === 'cap-text' && state.capture) state.capture.text = e.target.value;
 });
@@ -827,13 +1016,13 @@ captureDialog.addEventListener('close', () => {
   if (state.recognizer) state.recognizer.stop();
   state.capture = null;
 });
-$('#edit-btn').addEventListener('click', () => toggleEdit());
 
 // Editor fields live inside #app, which is re-rendered; one listener on it survives re-renders.
 app.addEventListener('input', (e) => {
   const t = e.target;
   if (!state.edit || !t.dataset.f) return;
-  setItemField(state.edit.items[Number(t.dataset.idx)], t.dataset.f, t.value);
+  const d = currentDraft();
+  if (d) setItemField(d.items[Number(t.dataset.idx)], t.dataset.f, t.value);
 });
 
 /** Sets a field; for a start-only task (end equal to start) the end follows the start. */
@@ -849,7 +1038,8 @@ function setItemField(item, field, value) {
 
 app.addEventListener('change', (e) => {
   const t = e.target;
-  if (state.edit && t.dataset.action === 'edit-scope') state.edit.applyTo = t.value;
+  if (t.dataset.action === 'edit-kind') editorPicked('kind', t.value);
+  if (t.dataset.action === 'edit-date') editorPicked('date', t.value);
 });
 
 /* ---------- Helpers ---------- */
