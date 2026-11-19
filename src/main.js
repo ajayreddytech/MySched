@@ -8,18 +8,25 @@ import {
   watchWeekend,
   watchSaturday,
   watchSunday,
+  watchWeekday,
   watchDay,
-  saveStandard,
-  saveSchedule,
-  saveSaturday,
-  saveSunday,
+  saveWeekday,
   saveDayChanges,
   saveDayFull,
   loadDay,
   deleteDayOverride,
 } from './firebase.js';
 import { parseSpeech } from './lib/parser.js';
-import { resolveDay, applyChanges, sortItems, findOverlaps, pickItem, mergeDayDoc } from './lib/schedule.js';
+import {
+  resolveDay,
+  applyChanges,
+  sortItems,
+  findOverlaps,
+  pickItem,
+  mergeDayDoc,
+  WEEKDAY_GROUPS,
+  WEEKDAY_NAMES,
+} from './lib/schedule.js';
 import {
   dateKey,
   parseDateKey,
@@ -31,7 +38,6 @@ import {
   formatWeekday,
   isValidHHMM,
   isToday,
-  isWeekend,
   toMinutes,
 } from './lib/time.js';
 
@@ -59,16 +65,19 @@ const MIC_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="curren
 
 const state = {
   user: undefined, // undefined = checking, null = signed out, object = signed in
-  standard: null, // null = loading; array of weekday (Mon to Fri) items
+  standard: null, // null = loading; older Monday to Friday schedule (fallback) as an array of items
   weekend: undefined, // older combined Saturday and Sunday schedule: undefined = loading; null = none; array = items
-  saturday: undefined, // undefined = loading; null = not saved yet (older weekend or Monday to Friday is used); array = items
-  sunday: undefined, // same as saturday
+  saturday: undefined, // older Saturday schedule: undefined = loading; null = not saved yet; array = items
+  sunday: undefined, // older Sunday schedule, same as saturday
+  // One schedule per weekday, keyed by getDay() (0 = Sunday): undefined = loading; null = not saved; array = items
+  weekly: {},
   dayDoc: undefined, // undefined = loading; null = no override; object = override
   viewDate: startOfDay(),
   unsubStandard: null,
   unsubWeekend: null,
   unsubSaturday: null,
   unsubSunday: null,
+  unsubWeekly: [],
   unsubDay: null,
   recognizer: null,
   draft: null, // review dialog state
@@ -101,16 +110,19 @@ function subscribe() {
   state.unsubWeekend?.();
   state.unsubSaturday?.();
   state.unsubSunday?.();
+  state.unsubWeekly.forEach((unsub) => unsub());
   state.unsubDay?.();
   state.standard = null;
   state.weekend = undefined;
   state.saturday = undefined;
   state.sunday = undefined;
+  state.weekly = {};
   state.dayDoc = undefined;
   state.unsubStandard = null;
   state.unsubWeekend = null;
   state.unsubSaturday = null;
   state.unsubSunday = null;
+  state.unsubWeekly = [];
   state.unsubDay = null;
   if (!state.user) return;
   state.unsubStandard = watchStandard(
@@ -133,21 +145,37 @@ function subscribe() {
     (items) => { state.sunday = items; render(); },
     fail,
   );
+  for (let dow = 0; dow < 7; dow++) {
+    state.unsubWeekly.push(watchWeekday(
+      state.user.uid,
+      dow,
+      (items) => { state.weekly[dow] = items; render(); },
+      fail,
+    ));
+  }
   subscribeDay();
 }
 
-/** The standard schedule for a date: Saturday and Sunday use the weekend one once it exists. */
-function baseFor(date) {
-  const day = date.getDay();
-  const own = day === 6 ? state.saturday : day === 0 ? state.sunday : null;
-  if (own) return own;
-  if (isWeekend(date) && state.weekend) return state.weekend;
+/**
+ * The standard schedule for one weekday (0 = Sunday). Its own schedule wins; until it is saved,
+ * Saturday and Sunday fall back to the older weekend one, then to Monday to Friday.
+ */
+function weekdaySchedule(dow) {
+  if (state.weekly[dow]) return state.weekly[dow];
+  if (dow === 6) return state.saturday ?? state.weekend ?? state.standard;
+  if (dow === 0) return state.sunday ?? state.weekend ?? state.standard;
   return state.standard;
+}
+
+/** The standard schedule for a date. */
+function baseFor(date) {
+  return weekdaySchedule(date.getDay());
 }
 
 function scheduleLoading() {
   return state.standard === null || state.weekend === undefined
-    || state.saturday === undefined || state.sunday === undefined || state.dayDoc === undefined;
+    || state.saturday === undefined || state.sunday === undefined || state.dayDoc === undefined
+    || WEEKDAY_GROUPS.all.days.some((dow) => state.weekly[dow] === undefined);
 }
 
 function subscribeDay() {
@@ -223,24 +251,38 @@ function renderMain() {
   app.innerHTML = navHTML(day) + timelineHTML(day.items, isToday(state.viewDate), nowMin);
 }
 
-/* ---------- In-place editor: Monday to Friday, Saturday, Sunday, or one special day ---------- */
+/* ---------- In-place editor: all days, a group of days, one weekday, or one specific day ---------- */
 
-// state.edit = { kind: 'weekday' | 'saturday' | 'sunday' | 'day', date: 'YYYY-MM-DD', drafts, loading }
+// state.edit = { kind, date: 'YYYY-MM-DD', drafts, loading }
+// kind: 'all' | 'weekdays' | 'weekends' (groups in WEEKDAY_GROUPS), 'dow:N' (one weekday, N = 0 Sunday … 6 Saturday),
+// or 'day' (the specific date in e.date).
 // A draft = { items, original } where original is the normalised starting list, used to tell what changed.
 
-const KIND_LABEL = { weekday: 'Monday to Friday', saturday: 'Saturday', sunday: 'Sunday' };
-const KIND_DOC = { weekday: 'standard', saturday: 'saturday', sunday: 'sunday' };
+const DOW_KINDS = WEEKDAY_NAMES.map((_, dow) => `dow:${dow}`);
+// Monday first, as people usually read a week.
+const WEEKDAY_KIND_ORDER = [1, 2, 3, 4, 5, 6, 0].map((dow) => `dow:${dow}`);
+const KIND_LABEL = {
+  all: WEEKDAY_GROUPS.all.label,
+  weekdays: WEEKDAY_GROUPS.weekdays.label,
+  weekends: WEEKDAY_GROUPS.weekends.label,
+  ...Object.fromEntries(DOW_KINDS.map((k, dow) => [k, WEEKDAY_NAMES[dow]])),
+};
+
+/** The weekdays (getDay numbers) a weekly kind covers; null for a specific day. */
+function kindDays(kind) {
+  if (kind === 'day') return null;
+  if (kind.startsWith('dow:')) return [Number(kind.slice(4))];
+  return WEEKDAY_GROUPS[kind].days;
+}
 
 const draftKey = (e) => (e.kind === 'day' ? `day:${e.date}` : e.kind);
 const currentDraft = () => (state.edit ? state.edit.drafts[draftKey(state.edit)] : null);
 const normItems = (items) => JSON.stringify(sortItems(items.map(pickItem)));
 const makeDraft = (items) => ({ items, original: normItems(items) });
 
-/** The schedule a kind starts from: its own saved one, else the older weekend one, else Monday to Friday. */
+/** The schedule a weekly kind starts from: its first weekday's schedule. */
 function startingItems(kind) {
-  if (kind === 'weekday') return state.standard;
-  const own = kind === 'saturday' ? state.saturday : state.sunday;
-  return own ?? state.weekend ?? state.standard;
+  return weekdaySchedule(kindDays(kind)[0]);
 }
 
 function renderMenuEditLabel() {
@@ -253,7 +295,7 @@ function toggleEdit() {
   if (!state.user) return toast('Sign in with Google first.');
   if (state.edit) return saveEdit();
   if (scheduleLoading()) return toast('Still loading your schedule…');
-  state.edit = { kind: 'weekday', date: dateKey(state.viewDate), drafts: {}, loading: null };
+  state.edit = { kind: 'weekdays', date: dateKey(state.viewDate), drafts: {}, loading: null };
   ensureDraft();
   render();
 }
@@ -264,7 +306,7 @@ function discardEdit() {
   toast('Edits discarded.');
 }
 
-/** Makes sure the chosen schedule has a draft; a special day is read from Firestore first. */
+/** Makes sure the chosen schedule has a draft; a specific day is read from Firestore first. */
 function ensureDraft() {
   const e = state.edit;
   if (!e) return;
@@ -324,17 +366,18 @@ function scheduleEditorHTML(title, items) {
 function editorHTML(e) {
   const isDay = e.kind === 'day';
   const options = [
-    ['weekday', KIND_LABEL.weekday],
-    ['saturday', KIND_LABEL.saturday],
-    ['sunday', KIND_LABEL.sunday],
-    ['day', 'Special day'],
+    ['all', KIND_LABEL.all],
+    ['weekdays', KIND_LABEL.weekdays],
+    ['weekends', KIND_LABEL.weekends],
+    ...WEEKDAY_KIND_ORDER.map((k) => [k, KIND_LABEL[k]]),
+    ['day', 'Specific day'],
   ];
   const draft = currentDraft();
   let body;
   if (!draft) {
     body = `<p class="panel center empty">Loading…</p>`;
   } else {
-    const title = isDay ? `Special day: ${formatDayLong(parseDateKey(e.date))}` : KIND_LABEL[e.kind];
+    const title = isDay ? `Specific day: ${formatDayLong(parseDateKey(e.date))}` : KIND_LABEL[e.kind];
     body = scheduleEditorHTML(title, draft.items);
   }
   return `
@@ -350,7 +393,7 @@ function editorHTML(e) {
         ${isDay ? `
         <label class="field scope">
           <span>Day</span>
-          <input type="date" data-action="edit-date" value="${esc(e.date)}" aria-label="Special day" />
+          <input type="date" data-action="edit-date" value="${esc(e.date)}" aria-label="Specific day" />
         </label>` : ''}
       </div>
     </section>
@@ -400,8 +443,12 @@ async function saveEdit() {
     const uid = state.user.uid;
     for (const [key, d] of changed) {
       const items = sortItems(d.items.map(pickItem));
-      if (key.startsWith('day:')) await saveDayFull(uid, key.slice(4), items);
-      else await saveSchedule(uid, KIND_DOC[key], items);
+      if (key.startsWith('day:')) {
+        await saveDayFull(uid, key.slice(4), items);
+      } else {
+        // A group or one weekday: every weekday it covers gets this schedule.
+        for (const dow of kindDays(key)) await saveWeekday(uid, dow, items);
+      }
     }
     state.edit = null;
     render();
@@ -719,25 +766,55 @@ function respeak() {
 /** Modes that change a standard schedule (every weekday or every weekend day), not one date. */
 const isStandardMode = (mode) => ['standard', 'saturday', 'sunday'].includes(mode);
 
-function draftFromText(transcript) {
-  const parsed = parseSpeech(transcript, { today: new Date() });
+/** The schedule a date has now: its specific-day changes on top of its weekday schedule. */
+async function currentDaySchedule(date) {
+  const dayDoc = date === dateKey(state.viewDate) && state.dayDoc !== undefined
+    ? state.dayDoc
+    : await loadDay(state.user.uid, date);
+  return resolveDay(baseFor(parseDateKey(date)), dayDoc).items;
+}
+
+const toRow = ({ op, start, end, title, description }) => ({ op, start, end, title, description });
+
+/** Works out the review table from the text. "Keep that day, except ..." starts from the day's current schedule. */
+async function draftFromText(transcript) {
+  const parsed = parseSpeech(transcript, { today: new Date(), viewDate: state.viewDate });
+  if (parsed.modify) {
+    const date = parsed.date || dateKey(state.viewDate);
+    const merged = applyChanges(await currentDaySchedule(date), parsed.items);
+    return {
+      mode: 'day-full',
+      date,
+      rows: merged.map((i) => ({ op: 'set', start: i.start, end: i.end, title: i.title, description: i.description })),
+      warnings: parsed.warnings,
+    };
+  }
   return {
     mode: parsed.scope === 'day' ? 'day-patch' : 'standard',
     date: parsed.date || dateKey(state.viewDate),
-    rows: parsed.items.map(({ op, start, end, title, description }) => ({ op, start, end, title, description })),
+    rows: parsed.items.map(toRow),
     warnings: parsed.warnings,
   };
 }
 
-function openReview(transcript) {
-  state.draft = { transcript, listening: false, showErrors: false, ...draftFromText(transcript) };
+async function openReview(transcript) {
+  try {
+    const built = await draftFromText(transcript);
+    state.draft = { transcript, listening: false, showErrors: false, ...built };
+  } catch (err) {
+    return fail(err);
+  }
   renderReview();
   if (!dialog.open) dialog.showModal();
 }
 
-function reparseDraft() {
+async function reparseDraft() {
   if (!state.draft) return;
-  Object.assign(state.draft, draftFromText(state.draft.transcript), { showErrors: false });
+  try {
+    Object.assign(state.draft, await draftFromText(state.draft.transcript), { showErrors: false });
+  } catch (err) {
+    return fail(err);
+  }
   renderReview();
 }
 
@@ -866,6 +943,9 @@ function refreshWarnings() {
   if (box && state.draft) box.innerHTML = warningsHTML(state.draft);
 }
 
+/** Saves one schedule as the standard schedule for each of the given weekdays. */
+const saveWeekdays = (uid, days, items) => Promise.all(days.map((dow) => saveWeekday(uid, dow, items)));
+
 async function submitDraft() {
   const d = state.draft;
   if (!d || state.busy) return;
@@ -882,11 +962,11 @@ async function submitDraft() {
     const uid = state.user.uid;
     const standardItems = sortItems(items.map(pickItem));
     if (d.mode === 'standard') {
-      await saveStandard(uid, standardItems);
+      await saveWeekdays(uid, WEEKDAY_GROUPS.weekdays.days, standardItems);
     } else if (d.mode === 'saturday') {
-      await saveSaturday(uid, standardItems);
+      await saveWeekdays(uid, [6], standardItems);
     } else if (d.mode === 'sunday') {
-      await saveSunday(uid, standardItems);
+      await saveWeekdays(uid, [0], standardItems);
     } else {
       await saveDayChanges(uid, d.date, d.mode, items);
     }

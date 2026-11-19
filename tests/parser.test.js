@@ -151,3 +151,41 @@ test('spoken "bullet" words make separate bullet lines in the notes', () => {
   const r = parseSpeech('9 to 10 gym: bullet water bullet towel bullet soap', { today: TODAY });
   assert.equal(r.items[0].description, '• Water\n• Towel\n• Soap');
 });
+
+test('"coming Tuesday" and "next Tuesday" both mean the Tuesday ahead', () => {
+  const coming = parseSpeech('coming Tuesday 9 to 10 gym', { today: TODAY });
+  const next = parseSpeech('next Tuesday 9 to 10 gym', { today: TODAY });
+  assert.equal(coming.date, '2026-11-24');
+  assert.equal(next.date, '2026-11-24');
+  assert.equal(coming.scope, 'day');
+});
+
+test('"second Saturday from now" counts upcoming Saturdays from the next one', () => {
+  const r = parseSpeech('second Saturday from now 9 to 10 gym', { today: TODAY });
+  assert.equal(r.date, '2026-11-28');
+  assert.deepEqual(r.items.map((i) => [i.start, i.title]), [['09:00', 'Gym']]);
+});
+
+test('"this day" means the day on screen', () => {
+  const r = parseSpeech('this day 9 to 10 gym', { today: TODAY, viewDate: new Date(2026, 11, 3) });
+  assert.equal(r.date, '2026-12-03');
+  assert.equal(parseSpeech('this day 9 to 10 gym', { today: TODAY }).date, '2026-11-18');
+});
+
+test('a specific date such as "November 24th" still works', () => {
+  assert.equal(parseSpeech('November 24th 9 to 10 gym', { today: TODAY }).date, '2026-11-24');
+});
+
+test('"keep the day as it is, except ..." marks a change to the current schedule', () => {
+  const r = parseSpeech(
+    'keep the regular schedule of that day as it is, except make these specific changes: 9 to 10 gym',
+    { today: TODAY, viewDate: new Date(2026, 10, 20) },
+  );
+  assert.equal(r.modify, true);
+  assert.equal(r.date, '2026-11-20');
+  assert.deepEqual(r.items, [{ op: 'set', start: '09:00', end: '10:00', title: 'Gym', description: '' }]);
+});
+
+test('a plain schedule is not a modify request', () => {
+  assert.equal(parseSpeech('9 to 10 gym', { today: TODAY }).modify, false);
+});

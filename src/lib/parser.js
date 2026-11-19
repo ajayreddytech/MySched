@@ -9,9 +9,11 @@
 //   "at nine for one hour yoga"               (start time plus duration)
 //   "9 in the evening to 10 pm party"         "noon", "midnight", "nine o'clock"
 //   "tomorrow 2 to 3 pm meeting, cancel 4 to 5 pm review"
-//   "on Friday ...", "on November 20 ...", "today ..."
+//   "on Friday ...", "on November 20 ...", "today ...", "this day ...", "coming Tuesday ...",
+//   "second Saturday from now ..."
+//   "keep that day as it is, except make these changes: 9 to 10 gym"  (modify: true)
 //
-// Output: { transcript, scope: 'standard' | 'day', date: 'YYYY-MM-DD' | null,
+// Output: { transcript, scope: 'standard' | 'day', date: 'YYYY-MM-DD' | null, modify: boolean,
 //           items: [{ op: 'set' | 'remove', start, end, title, description }], warnings: [] }
 
 import { addDays, dateKey, fromMinutes, startOfDay } from './time.js';
@@ -120,19 +122,34 @@ function withYear(monthIdx, day, today, match) {
   return { date: d, match };
 }
 
-/** Finds a day reference such as "tomorrow", "on Friday", "November 20". */
-function detectDay(text, today) {
+const ORDINAL_WORDS = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5 };
+
+/** Finds a day reference such as "tomorrow", "on Friday", "coming Tuesday", "November 20". */
+function detectDay(text, today, viewDate = today) {
   const t = startOfDay(today);
   let m;
   if ((m = /\bday after tomorrow\b/i.exec(text))) return { date: addDays(t, 2), match: m[0] };
   if ((m = /\btomorrow\b/i.exec(text))) return { date: addDays(t, 1), match: m[0] };
   if ((m = /\b(?:today|tonight)\b/i.exec(text))) return { date: t, match: m[0] };
+  // "this day" / "that day" mean the day the user is looking at.
+  if ((m = /\b(?:this|that)\s+day\b/i.exec(text))) return { date: startOfDay(viewDate), match: m[0] };
 
-  m = new RegExp(`\\b(next\\s+)?(${WEEKDAYS.join('|')})\\b`, 'i').exec(text);
+  // "second Saturday from now": the Nth upcoming Saturday, counting from the next one after today.
+  m = new RegExp(`\\b(first|second|third|fourth|fifth|\\d{1,2}(?:st|nd|rd|th))\\s+(?:(?:next|coming)\\s+)?(${WEEKDAYS.join('|')})\\b(?:\\s+from\\s+(?:now|today))?`, 'i').exec(text);
+  if (m) {
+    const n = ORDINAL_WORDS[m[1].toLowerCase()] ?? parseInt(m[1], 10);
+    const target = WEEKDAYS.indexOf(m[2].toLowerCase());
+    let diff = (target - t.getDay() + 7) % 7;
+    if (diff === 0) diff = 7;
+    return { date: addDays(t, diff + 7 * (n - 1)), match: m[0] };
+  }
+
+  // "next Tuesday" when today is Tuesday means a week on; "coming Tuesday" means today.
+  m = new RegExp(`\\b((?:next|coming|this)\\s+)?(${WEEKDAYS.join('|')})\\b`, 'i').exec(text);
   if (m) {
     const target = WEEKDAYS.indexOf(m[2].toLowerCase());
     let diff = (target - t.getDay() + 7) % 7;
-    if (m[1] && diff === 0) diff = 7;
+    if (m[1] && /^next/i.test(m[1]) && diff === 0) diff = 7;
     return { date: addDays(t, diff), match: m[0] };
   }
 
@@ -240,13 +257,22 @@ function splitGap(gap) {
   return { head: gap.slice(0, d.index), tail: gap.slice(d.index + d[0].length) };
 }
 
-export function parseSpeech(transcript, { today = new Date() } = {}) {
+// "keep the schedule for that day as it is, except make these changes: ..." -> the times after "except" change that day.
+const KEEP = /\b(?:keep|retain)\b/i;
+const EXCEPT = /\bexcept\b/i;
+const CHANGE_LEAD = /^\s*[,:;.-]?\s*(?:and\s+)?(?:please\s+)?(?:make|do|apply)\s+(?:these|the|this|following|the following)?\s*(?:specific\s+|following\s+)?(?:changes?|edits?)\s*[,:;.-]?/i;
+
+/**
+ * options.today: the current date. options.viewDate: the day on screen (for "this day").
+ * Output also has modify: true when the user asked to keep that day's schedule and change only some times.
+ */
+export function parseSpeech(transcript, { today = new Date(), viewDate = today } = {}) {
   const warnings = [];
   let text = normalize(transcript);
   let scope = 'standard';
   let date = null;
 
-  const day = detectDay(text, today);
+  const day = detectDay(text, today, viewDate);
   if (day) {
     if (day.date) {
       scope = 'day';
@@ -257,10 +283,22 @@ export function parseSpeech(transcript, { today = new Date() } = {}) {
     }
   }
 
+  let modify = false;
+  if (KEEP.test(text)) {
+    modify = true;
+    const except = EXCEPT.exec(text);
+    text = except
+      ? text.slice(except.index + except[0].length)
+      : text.replace(/\b(?:keep|retain)\b[^,.;:]*/i, ' ');
+    text = text.replace(CHANGE_LEAD, ' ');
+  }
+
   const matches = [...text.matchAll(TIME_RE)];
   if (matches.length === 0) {
-    warnings.push('No times found. Try something like: "9 to 10 gym, 10 to 11 coding".');
-    return { transcript, scope, date, items: [], warnings };
+    warnings.push(modify
+      ? 'No changes found. Say which times to change after "except", for example: "except 9 to 10 gym".'
+      : 'No times found. Try something like: "9 to 10 gym, 10 to 11 coding".');
+    return { transcript, scope, date, modify, items: [], warnings };
   }
 
   const items = [];
@@ -311,5 +349,5 @@ export function parseSpeech(transcript, { today = new Date() } = {}) {
     }
   });
 
-  return { transcript, scope, date, items, warnings };
+  return { transcript, scope, date, modify, items, warnings };
 }

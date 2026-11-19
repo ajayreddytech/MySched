@@ -10,6 +10,19 @@
 import { toMinutes } from './time.js';
 import { formatNotes, toTitleCase } from './text.js';
 
+/** Weekday names, indexed by getDay() (0 = Sunday). */
+export const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/**
+ * Groups of weekdays that share one schedule. Each lists its days in the order used to pick the
+ * schedule shown in the editor (the first day of the group).
+ */
+export const WEEKDAY_GROUPS = {
+  all: { label: 'All days', days: [1, 2, 3, 4, 5, 6, 0] },
+  weekdays: { label: 'Monday to Friday', days: [1, 2, 3, 4, 5] },
+  weekends: { label: 'Saturday and Sunday', days: [6, 0] },
+};
+
 export function pickItem(i) {
   return {
     start: i.start,

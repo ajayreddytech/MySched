@@ -63,27 +63,14 @@ export function signOutUser() {
   return signOut(auth);
 }
 
-/* ---------- Weekday schedule: users/{uid}/schedule/standard (Monday to Friday) ---------- */
+/* ---------- Schedules: users/{uid}/schedule/{name} ----------
+ * Each weekday has its own document (sun, mon, … sat). Saving "All days", "Monday to Friday",
+ * "Saturday and Sunday" or one weekday writes the matching documents.
+ * Older documents are still read as fallbacks until a weekday has its own:
+ * standard = Monday to Friday, saturday, sunday, and weekend (an older combined Saturday and Sunday). */
 
-function standardRef(uid) {
-  return doc(db, 'users', uid, 'schedule', 'standard');
-}
-
-export function watchStandard(uid, onData, onError) {
-  return onSnapshot(
-    standardRef(uid),
-    (snap) => onData(snap.exists() ? snap.data().items || [] : []),
-    onError,
-  );
-}
-
-export function saveStandard(uid, items) {
-  return setDoc(standardRef(uid), { items, updatedAt: serverTimestamp() });
-}
-
-/* ---------- Named schedules: users/{uid}/schedule/{name} ----------
- * standard = Monday to Friday, saturday, sunday, and weekend (an older combined Saturday and Sunday,
- * used only as a fallback until Saturday and Sunday have their own). */
+/** Document name for each weekday, indexed by JavaScript's getDay() (0 = Sunday). */
+export const WEEKDAY_DOC = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
 function scheduleRef(uid, name) {
   return doc(db, 'users', uid, 'schedule', name);
@@ -102,6 +89,23 @@ export function saveSchedule(uid, name, items) {
   return setDoc(scheduleRef(uid, name), { items, updatedAt: serverTimestamp() });
 }
 
+/** Watches the schedule for one weekday (0 = Sunday … 6 = Saturday). */
+export function watchWeekday(uid, dow, onData, onError) {
+  return watchSchedule(uid, WEEKDAY_DOC[dow], onData, onError);
+}
+
+export function saveWeekday(uid, dow, items) {
+  return saveSchedule(uid, WEEKDAY_DOC[dow], items);
+}
+
+export function watchStandard(uid, onData, onError) {
+  return onSnapshot(
+    scheduleRef(uid, 'standard'),
+    (snap) => onData(snap.exists() ? snap.data().items || [] : []),
+    onError,
+  );
+}
+
 export function watchWeekend(uid, onData, onError) {
   return watchSchedule(uid, 'weekend', onData, onError);
 }
@@ -112,14 +116,6 @@ export function watchSaturday(uid, onData, onError) {
 
 export function watchSunday(uid, onData, onError) {
   return watchSchedule(uid, 'sunday', onData, onError);
-}
-
-export function saveSaturday(uid, items) {
-  return saveSchedule(uid, 'saturday', items);
-}
-
-export function saveSunday(uid, items) {
-  return saveSchedule(uid, 'sunday', items);
 }
 
 /* ---------- Day overrides: users/{uid}/days/{YYYY-MM-DD} ---------- */

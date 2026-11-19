@@ -4,8 +4,8 @@ A single-page web app to speak your daily schedule and see it at a glance. The l
 
 - **Sign in with Google**; your profile picture appears top-right. Click it to sign out.
 - **Mic button** (left of your picture): say your day, review it in an "Is this what you want?" panel, edit or re-speak, then **Submit**.
-- **Weekday schedule** (Monday to Friday) and **weekend schedule** (Saturday and Sunday). Until you save a weekend schedule, weekends use the weekday one.
-- **Day changes** (say "tomorrow …" or "on Friday …") change only the times you mention. All other days keep their weekday or weekend schedule.
+- **Weekly schedules:** set one schedule for all days, for Monday to Friday, for Saturday and Sunday, or for each weekday on its own. Until you save a weekday, it uses the older weekday or weekend schedule.
+- **Specific days** (say "tomorrow …", "on Friday …", "coming Tuesday …" or "November 24th …") change only the times you mention. All other days keep their weekly schedule.
 - **Firestore** stores everything and syncs live across all your devices.
 - **Netlify** hosts the static site.
 - **Installable app:** on a phone, use Add to Home Screen (or the install prompt). It opens full screen like a native app. On a phone signed in, the top-right menu holds Profile, Edit schedule, Add to schedule and Sign out.
@@ -50,11 +50,13 @@ The parser understands these patterns:
 | `tomorrow 2 to 3 pm meeting` | Changes only that time on tomorrow |
 | `on Friday cancel 4 to 5 pm review` | Removes that one task on Friday |
 | `on November 25 …` | Changes on a specific date |
+| `this day …`, `coming Tuesday …`, `second Saturday from now …` | Changes on the day you are viewing, the next Tuesday, or the second upcoming Saturday |
+| `keep that day as it is, except make these changes: 9 to 10 gym` | Takes that day's current schedule, changes only the times listed, and shows the full day to confirm |
 
 Speak with pauses between tasks. Each time range starts a new task, and the review panel lets you fix anything the parser got wrong.
 
 **Apply as** in the review panel chooses how the result is saved:
-- *Every weekday (Monday to Friday)* or *Every weekend day (Saturday and Sunday)*: replaces that standard schedule.
+- *Every weekday (Monday to Friday)* or *Every weekend day (Saturday and Sunday)*: replaces that weekly schedule.
 - *Only change these times on one day*: keeps the standard schedule and changes only the listed times.
 - *Replace the whole day*: that day shows only the tasks you list.
 
@@ -65,8 +67,9 @@ Use **Reset this day** to drop a day's changes and return to the standard schedu
 ## Data model (Firestore)
 
 ```
-users/{uid}/schedule/standard        { items: [{start, end, title, description}], updatedAt }   (Mon to Fri)
-users/{uid}/schedule/weekend         { items: [{start, end, title, description}], updatedAt }   (Sat and Sun; absent = use standard)
+users/{uid}/schedule/{sun|mon|tue|wed|thu|fri|sat}   { items: [{start, end, title, description}], updatedAt }   (one per weekday)
+users/{uid}/schedule/standard        { items: [...] }   (older Mon to Fri; fallback only)
+users/{uid}/schedule/weekend         { items: [...] }   (older Sat and Sun; fallback only)
 users/{uid}/days/{YYYY-MM-DD}        { mode: "patch", changes: [{op, start, end, title, description}] }
                                   or { mode: "full",  items: [...] }
 ```
