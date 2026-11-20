@@ -20,6 +20,7 @@ import {
   deleteDayOverride,
 } from './firebase.js';
 import { parseSpeech } from './lib/parser.js';
+import { parseStructured, looksStructured, describeWrites, aiInstructions } from './lib/plan.js';
 import {
   resolveDay,
   applyChanges,
@@ -27,6 +28,7 @@ import {
   findOverlaps,
   pickItem,
   mergeDayDoc,
+  pickChange,
   scheduleVersionFor,
   WEEKDAY_GROUPS,
   WEEKDAY_NAMES,
@@ -38,11 +40,14 @@ import {
   startOfDay,
   formatTime,
   formatDayLong,
+  formatDayShort,
   formatDayMonth,
   formatWeekday,
   isValidHHMM,
+  isValidDateKey,
   isToday,
   toMinutes,
+  nextWeekdayOnOrAfter,
 } from './lib/time.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -301,7 +306,8 @@ function renderMain() {
 // state.edit = { kind, date: 'YYYY-MM-DD', drafts, loading }
 // kind: 'all' | 'weekdays' | 'weekends' (groups in WEEKDAY_GROUPS), 'dow:N' (one weekday, N = 0 Sunday … 6 Saturday),
 // or 'day' (the specific date in e.date).
-// A draft = { items, original } where original is the normalised starting list, used to tell what changed.
+// A draft = { items, original, when, pickDate, pickMonth }: original is the normalised starting list, used to tell
+// what changed; when is the chosen start option (see whenOptions) and pickDate / pickMonth hold its date or month.
 
 const DOW_KINDS = WEEKDAY_NAMES.map((_, dow) => `dow:${dow}`);
 // Monday first, as people usually read a week.
@@ -323,7 +329,21 @@ function kindDays(kind) {
 const draftKey = (e) => (e.kind === 'day' ? `day:${e.date}` : e.kind);
 const currentDraft = () => (state.edit ? state.edit.drafts[draftKey(state.edit)] : null);
 const normItems = (items) => JSON.stringify(sortItems(items.map(pickItem)));
-const makeDraft = (items) => ({ items, original: normItems(items) });
+const makeDraft = (items, isDay = false) => ({
+  items,
+  original: normItems(items),
+  when: isDay ? 'once' : 'today',
+  pickDate: todayKey(),
+  pickMonth: todayKey().slice(0, 7),
+});
+
+/** Changes the chosen start option, or the date or month picked for it, of the open draft. */
+function setDraftOption(patch) {
+  const d = currentDraft();
+  if (!d) return;
+  Object.assign(d, patch);
+  render();
+}
 
 /** The schedule a weekly kind starts from: its first weekday's schedule. */
 function startingItems(kind) {
@@ -364,6 +384,74 @@ function ensureDraft() {
   }
 }
 
+/**
+ * The date key a changed draft starts from, or null when the choice has no date yet.
+ * Weekly schedules start on a date; a picked date or month is never in the past, and for one
+ * weekday it moves to the first matching weekday on or after that date.
+ */
+function startKeyFor(key, d) {
+  const today = todayKey();
+  const notPast = (k) => (k > today ? k : today);
+  if (key.startsWith('day:')) {
+    const date = key.slice(4);
+    const dow = parseDateKey(date).getDay();
+    if (d.when === 'onward') return date;
+    if (d.when === 'date') return d.pickDate ? nextWeekdayOnOrAfter(notPast(d.pickDate), dow) : null;
+    if (d.when === 'month') return d.pickMonth ? nextWeekdayOnOrAfter(notPast(`${d.pickMonth}-01`), dow) : null;
+    return null; // 'once' saves that one day instead
+  }
+  if (d.when === 'today') return today;
+  if (d.when === 'date') return d.pickDate ? notPast(d.pickDate) : null;
+  if (d.when === 'month') return d.pickMonth ? notPast(`${d.pickMonth}-01`) : null;
+  return null;
+}
+
+const isOnceDay = (key, d) => key.startsWith('day:') && d.when === 'once';
+
+/** The start options offered for the open editor, with their pickers. Specific days and weekly schedules differ. */
+function whenOptions(e, d) {
+  if (e.kind !== 'day') {
+    return [
+      { value: 'today', title: 'From today on', hint: 'Changes this schedule from today. Earlier days keep what they had.' },
+      {
+        value: 'date',
+        title: 'From a date I pick',
+        hint: 'Changes this schedule from the date you pick.',
+        input: { type: 'date', field: 'pickDate', value: d.pickDate, min: todayKey(), label: 'Start date' },
+      },
+      {
+        value: 'month',
+        title: 'From a month I pick',
+        hint: 'Changes this schedule from the start of the month you pick (from today, if that month has begun).',
+        input: { type: 'month', field: 'pickMonth', value: d.pickMonth, min: todayKey().slice(0, 7), label: 'Start month' },
+      },
+    ];
+  }
+  const day = parseDateKey(e.date);
+  const name = WEEKDAY_NAMES[day.getDay()];
+  const when = formatDayMonth(day);
+  return [
+    { value: 'once', title: `Only ${name}, ${when}`, hint: 'Changes only this one day. Other days keep their schedule.' },
+    {
+      value: 'onward',
+      title: `Every ${name} from ${when} on`,
+      hint: `Every ${name} from this date on uses this schedule. Earlier ${name}s keep what they had.`,
+    },
+    {
+      value: 'date',
+      title: `Every ${name} from a date I pick`,
+      hint: `Starts on the first ${name} on or after the date you pick.`,
+      input: { type: 'date', field: 'pickDate', value: d.pickDate, min: todayKey(), label: 'Start date' },
+    },
+    {
+      value: 'month',
+      title: `Every ${name} from a month I pick`,
+      hint: `Starts on the first ${name} of the month you pick (from today, if that month has begun).`,
+      input: { type: 'month', field: 'pickMonth', value: d.pickMonth, min: todayKey().slice(0, 7), label: 'Start month' },
+    },
+  ];
+}
+
 async function loadDayDraft(e, key) {
   if (!state.user || e.loading === key) return;
   e.loading = key;
@@ -372,7 +460,7 @@ async function loadDayDraft(e, key) {
     const dayDoc = await loadDay(state.user.uid, e.date);
     if (state.edit !== e) return; // editor was closed meanwhile
     const day = resolveDay(baseFor(parseDateKey(e.date)), dayDoc);
-    e.drafts[key] = makeDraft(day.items.map(pickItem));
+    e.drafts[key] = makeDraft(day.items.map(pickItem), true);
   } catch (err) {
     fail(err);
   } finally {
@@ -393,6 +481,13 @@ function scheduleEditorHTML(title, items) {
       <article class="task edit-card">
         <input type="text" data-idx="${i}" data-f="title" value="${esc(it.title)}" placeholder="Task name" aria-label="Task ${i + 1} name" />
         <textarea rows="2" data-idx="${i}" data-f="description" placeholder="Notes (optional)" aria-label="Task ${i + 1} notes">${esc(it.description)}</textarea>
+        <div class="deadline-row">
+          <label class="deadline-field">
+            <span>Deadline (optional)</span>
+            <input type="date" data-idx="${i}" data-f="deadline" value="${esc(it.deadline || '')}" aria-label="Task ${i + 1} deadline" />
+          </label>
+          ${it.deadline ? `<button class="ghost small" data-action="edit-clear-deadline" data-idx="${i}">Clear deadline</button>` : ''}
+        </div>
         <button class="ghost small danger" data-action="edit-del" data-idx="${i}">Remove task</button>
       </article>
     </li>`).join('');
@@ -408,15 +503,38 @@ function scheduleEditorHTML(title, items) {
     </section>`;
 }
 
+/** The start-option cards for the open draft: a radio for each option, with its date or month picker when chosen. */
+function whenHTML(e, d) {
+  const start = startKeyFor(draftKey(e), d);
+  const startText = start ? `Starts ${formatDayLong(parseDateKey(start))}.` : 'Pick a date first.';
+  const cards = whenOptions(e, d).map((o) => {
+    const on = d.when === o.value;
+    const picker = on && o.input
+      ? `<input type="${o.input.type}" data-action="edit-pick" data-field="${o.input.field}" value="${esc(o.input.value)}" min="${o.input.min}" aria-label="${o.input.label}" />`
+      : '';
+    return `
+      <div class="when-card${on ? ' on' : ''}">
+        <label class="when-pick">
+          <input type="radio" name="when" value="${o.value}" data-action="edit-when" ${on ? 'checked' : ''} />
+          <span><strong>${esc(o.title)}</strong><small>${esc(on && o.input ? startText : o.hint)}</small></span>
+        </label>
+        ${picker}
+      </div>`;
+  }).join('');
+  return `
+    <p class="eyebrow">2 · When should it apply?</p>
+    <div class="when-list" role="radiogroup" aria-label="When this applies">${cards}</div>`;
+}
+
 function editorHTML(e) {
   const isDay = e.kind === 'day';
-  const options = [
-    ['all', KIND_LABEL.all],
-    ['weekdays', KIND_LABEL.weekdays],
-    ['weekends', KIND_LABEL.weekends],
-    ...WEEKDAY_KIND_ORDER.map((k) => [k, KIND_LABEL[k]]),
-    ['day', 'Specific day'],
-  ];
+  // Which schedule: chips, not a dropdown. Monday to Friday and the like come first, then each weekday.
+  const kinds = ['all', 'weekdays', 'weekends', ...WEEKDAY_KIND_ORDER, 'day'];
+  const chips = kinds.map((v) => {
+    const label = v === 'day' ? 'Specific day' : KIND_LABEL[v];
+    const on = e.kind === v;
+    return `<button type="button" class="chip" data-action="edit-kind" data-value="${v}" aria-pressed="${on}">${label}</button>`;
+  }).join('');
   const draft = currentDraft();
   let body;
   if (!draft) {
@@ -427,20 +545,19 @@ function editorHTML(e) {
   }
   return `
     <section class="editor-bar panel">
-      <div class="editor-pick">
-        <p class="eyebrow">Editing</p>
-        <label class="field scope">
-          <span>Schedule</span>
-          <select data-action="edit-kind" aria-label="Schedule to edit">
-            ${options.map(([v, label]) => `<option value="${v}" ${e.kind === v ? 'selected' : ''}>${label}</option>`).join('')}
-          </select>
-        </label>
+      <div class="editor-speak">
+        <button type="button" class="ghost" data-action="edit-speak" ${draft ? '' : 'disabled'}>${MIC_ICON}<span>Speak or type changes</span></button>
+      </div>
+      <div>
+        <p class="eyebrow">1 · What to edit</p>
+        <div class="scope-grid" role="group" aria-label="Schedule to edit">${chips}</div>
         ${isDay ? `
-        <label class="field scope">
-          <span>Day</span>
+        <label class="field deadline-field day-pick">
+          <span>Specific day</span>
           <input type="date" data-action="edit-date" value="${esc(e.date)}" aria-label="Specific day" />
         </label>` : ''}
       </div>
+      ${draft ? whenHTML(e, draft) : ''}
     </section>
     ${body}
     <div class="editor-actions">
@@ -482,7 +599,10 @@ async function saveEdit() {
   if (changed.some(([key]) => key.startsWith('day:') && key.slice(4) < todayKey())) {
     return toast(PAST_DAY_MESSAGE);
   }
-  const errors = changed.flatMap(([key, d]) => editErrors(d.items, draftLabel(key)));
+  const missing = changed
+    .filter(([key, d]) => !isOnceDay(key, d) && !startKeyFor(key, d))
+    .map(([key]) => `${draftLabel(key)}: pick a date or month first.`);
+  const errors = [...missing, ...changed.flatMap(([key, d]) => editErrors(d.items, draftLabel(key)))];
   if (errors.length) return toast(errors[0]);
   if (!state.user) return toast('Sign in first.');
 
@@ -491,12 +611,13 @@ async function saveEdit() {
     const uid = state.user.uid;
     for (const [key, d] of changed) {
       const items = sortItems(d.items.map(pickItem));
-      if (key.startsWith('day:')) {
+      if (isOnceDay(key, d)) {
         await saveDayFull(uid, key.slice(4), items);
-      } else {
-        // A group or one weekday: every weekday it covers, from today on.
-        for (const dow of kindDays(key)) await saveWeekdayVersion(uid, dow, todayKey(), items);
+        continue;
       }
+      // Weekly versions: a whole group or one weekday, or (for a specific day) that day's weekday.
+      const days = key.startsWith('day:') ? [parseDateKey(key.slice(4)).getDay()] : kindDays(key);
+      for (const dow of days) await saveWeekdayVersion(uid, dow, startKeyFor(key, d), items);
     }
     state.edit = null;
     render();
@@ -609,6 +730,7 @@ function timelineHTML(items, today, nowMin) {
               <article class="task">
                 <h2>${esc(i.title)}</h2>
                 ${notesHTML(i.description)}
+                ${i.deadline ? `<p class="deadline-tag">Deadline: ${esc(formatDayShort(parseDateKey(i.deadline)))}</p>` : ''}
                 ${STATUS_TAG[i.status] || ''}
               </article>
             </li>`;
@@ -733,8 +855,10 @@ function setListening(on) {
 
 /* ---------- Add dialog: speak or type, then build the schedule ---------- */
 
+/** Speak or type changes for the schedule being edited. Only available inside the editor. */
 function openCapture() {
   if (!state.user) return toast('Sign in with Google first.');
+  if (!state.edit || !currentDraft()) return toast('Open Edit schedule first.');
   state.capture = { text: '' };
   renderCapture();
   if (!captureDialog.open) captureDialog.showModal();
@@ -747,17 +871,24 @@ function renderCapture() {
   captureDialog.innerHTML = `
     <div class="review capture">
       <header>
-        <h2>Add to your schedule</h2>
-        <p class="muted">Speak it or type it, then tap <strong>Build schedule</strong>. For example: <em>“start at 6 am wake up, 7 to 8 gym, sleep 11 pm to 7 am”</em>.</p>
+        <h2>Speak or type your changes</h2>
+        <p class="muted">Say or type the tasks to change, then tap <strong>Apply to schedule</strong>. A task at the same start time is replaced; others are added. Save when you are happy. For example: <em>“7 to 8 gym, 4 to 5 pm review”</em>.</p>
       </header>
-      <textarea id="cap-text" rows="5" spellcheck="false" placeholder="Type your schedule, or tap Speak and say it.">${esc(c.text)}</textarea>
+      <textarea id="cap-text" rows="6" spellcheck="false" placeholder="Speak or type your changes, or paste the schedule from an AI.">${esc(c.text)}</textarea>
+      <div id="cap-preview">${previewHTML()}</div>
+      <details class="ai-help">
+        <summary>Ask an AI for this format</summary>
+        <p class="muted">Copy these instructions, give them to an AI with your request, then paste its answer above.</p>
+        <pre>${esc(aiInstructions(new Date()))}</pre>
+        <button type="button" class="ghost small" data-action="capture-copy-ai">Copy instructions</button>
+      </details>
       <div class="capture-row">
         <button class="ghost${listening ? ' recording' : ''}" data-action="capture-mic" aria-pressed="${listening}">
           ${MIC_ICON}<span>${listening ? 'Stop listening' : 'Speak'}</span>
         </button>
         <span class="spacer"></span>
         <button class="ghost" data-action="capture-cancel">Cancel</button>
-        <button class="primary" data-action="capture-build">Build schedule</button>
+        <button class="primary" data-action="capture-build">Apply to schedule</button>
       </div>
     </div>`;
 }
@@ -771,8 +902,10 @@ function toggleCaptureMic() {
   state.recognizer = startListening({
     onLive: (text) => {
       state.capture.text = text;
+      state.capture.plan = null; // spoken text changed, so any earlier check no longer applies
       const ta = captureDialog.querySelector('#cap-text');
       if (ta) ta.value = text;
+      renderPreview();
     },
     onDone: (text) => {
       state.recognizer = null;
@@ -786,9 +919,93 @@ function buildFromCapture() {
   const typed = captureDialog.querySelector('#cap-text')?.value ?? state.capture?.text ?? '';
   const text = typed.trim();
   if (state.recognizer) state.recognizer.stop();
-  if (!text) return toast('Type or speak your schedule first.');
+  if (!text) return toast('Type or speak your changes first.');
+  if (looksStructured(text)) {
+    // Pasted or typed schedule: check it and show what would be saved. Nothing is saved yet.
+    state.capture.text = text;
+    state.capture.plan = parseStructured(text, new Date());
+    renderPreview();
+    return;
+  }
   captureDialog.close();
-  openReview(text);
+  applyToEditor(text);
+}
+
+/** What the checked schedule will do, or the lines that stop it from saving. */
+function previewHTML() {
+  const p = state.capture?.plan;
+  if (!p) return '';
+  const notes = [
+    ...p.errors.map((m) => ['error', m]),
+    ...p.warnings.map((m) => ['warn', m]),
+  ];
+  const list = notes.length
+    ? `<ul class="notes">${notes.map(([type, msg]) => `<li class="${type}">${esc(msg)}</li>`).join('')}</ul>`
+    : '';
+  if (p.errors.length) {
+    return `${list}<p class="muted plan-note">Nothing was saved. Fix the lines above, then tap Apply to schedule again.</p>`;
+  }
+  const lines = describeWrites(p.writes).map((l) => `<li>${esc(l)}</li>`).join('');
+  return `
+    ${list}
+    <div class="plan">
+      <p class="eyebrow">This will save</p>
+      <ul class="plan-list">${lines}</ul>
+      <p class="muted plan-note">${p.taskCount} ${p.taskCount === 1 ? 'task' : 'tasks'} for each. Nothing is saved until you tap Save to schedule.</p>
+      <button class="primary" data-action="capture-save">Save to schedule</button>
+    </div>`;
+}
+
+function renderPreview() {
+  const box = captureDialog.querySelector('#cap-preview');
+  if (box) box.innerHTML = previewHTML();
+}
+
+/** Saves the checked schedule. Only possible when the check found no errors. */
+async function saveCheckedSchedule() {
+  const p = state.capture?.plan;
+  if (!p || p.errors.length || state.busy) return;
+  if (!state.user) return toast('Sign in first.');
+  state.busy = true;
+  try {
+    const uid = state.user.uid;
+    for (const w of p.writes) {
+      if (w.type === 'day') {
+        await saveDayFull(uid, w.date, w.items);
+      } else {
+        for (const dow of w.dows) await saveWeekdayVersion(uid, dow, w.from, w.items);
+      }
+    }
+    captureDialog.close();
+    state.edit = null;
+    render();
+    toast(`Saved ${p.taskCount} ${p.taskCount === 1 ? 'task' : 'tasks'} to your schedule.`);
+  } catch (err) {
+    fail(err);
+  } finally {
+    state.busy = false;
+  }
+}
+
+async function copyAiInstructions() {
+  try {
+    await navigator.clipboard.writeText(aiInstructions(new Date()));
+    toast('Copied. Give it to your AI, then paste its answer here.');
+  } catch {
+    toast('Could not copy. Open "Ask an AI for this format" and copy the text.');
+  }
+}
+
+/** Puts the spoken or typed tasks into the schedule open in the editor. Nothing is saved until Save schedules. */
+function applyToEditor(text) {
+  const d = currentDraft();
+  if (!d) return toast('Open Edit schedule first.');
+  const { items, warnings } = parseSpeech(text, { today: new Date(), viewDate: state.viewDate });
+  const changes = items.map(pickChange);
+  if (!changes.length) return toast(warnings[0] || "I didn't catch any tasks. Try again.");
+  d.items = applyChanges(d.items, changes);
+  render();
+  toast(`Applied ${changes.length} ${changes.length === 1 ? 'change' : 'changes'}. Check them, then tap Save schedules.`);
 }
 
 function respeak() {
@@ -826,7 +1043,7 @@ async function currentDaySchedule(date) {
   return resolveDay(baseFor(parseDateKey(date)), dayDoc).items;
 }
 
-const toRow = ({ op, start, end, title, description }) => ({ op, start, end, title, description });
+const toRow = ({ op, start, end, title, description, deadline }) => ({ op, start, end, title, description, deadline });
 
 /** Works out the review table from the text. "Keep that day, except ..." starts from the day's current schedule. */
 async function draftFromText(transcript) {
@@ -837,7 +1054,7 @@ async function draftFromText(transcript) {
     return {
       mode: 'day-full',
       date,
-      rows: merged.map((i) => ({ op: 'set', start: i.start, end: i.end, title: i.title, description: i.description })),
+      rows: merged.map((i) => ({ op: 'set', ...i })),
       warnings: parsed.warnings,
     };
   }
@@ -898,7 +1115,7 @@ function validate(d) {
     // An end earlier than the start is an overnight task (e.g. 11 pm to 7 am), which is allowed.
     const end = r.end || r.start;
     if (!isValidHHMM(end)) errors.push(`Task ${n}: set a valid end time.`);
-    items.push({ op: 'set', start: r.start, end, title: r.title, description: r.description });
+    items.push({ op: 'set', start: r.start, end, title: r.title, description: r.description, deadline: r.deadline });
   });
   return { errors, items };
 }
@@ -1061,10 +1278,6 @@ const handlers = {
     setMenu(false);
     toggleEdit();
   },
-  'menu-add': () => {
-    setMenu(false);
-    openCapture();
-  },
   prev: () => setViewDate(addDays(state.viewDate, -1)),
   next: () => setViewDate(addDays(state.viewDate, 1)),
   today: () => setViewDate(new Date()),
@@ -1088,10 +1301,19 @@ const handlers = {
     currentDraft()?.items.splice(Number(el.dataset.idx), 1);
     render();
   },
+  'edit-clear-deadline': (el) => {
+    const item = currentDraft()?.items[Number(el.dataset.idx)];
+    if (item) delete item.deadline;
+    render();
+  },
+  'edit-kind': (el) => editorPicked('kind', el.dataset.value),
+  'edit-speak': () => openCapture(),
   'rv-speak': () => respeak(),
   'capture-mic': () => toggleCaptureMic(),
   'capture-build': () => buildFromCapture(),
   'capture-cancel': () => captureDialog.close(),
+  'capture-save': () => saveCheckedSchedule(),
+  'capture-copy-ai': () => copyAiInstructions(),
   'rv-cancel': () => dialog.close(),
   'rv-submit': () => submitDraft(),
 };
@@ -1144,7 +1366,13 @@ dialog.addEventListener('close', () => {
 });
 
 captureDialog.addEventListener('input', (e) => {
-  if (e.target.id === 'cap-text' && state.capture) state.capture.text = e.target.value;
+  if (e.target.id !== 'cap-text' || !state.capture) return;
+  state.capture.text = e.target.value;
+  // Text changed after the check: the preview no longer matches it, so drop it.
+  if (state.capture.plan) {
+    state.capture.plan = null;
+    renderPreview();
+  }
 });
 captureDialog.addEventListener('close', () => {
   if (state.recognizer) state.recognizer.stop();
@@ -1172,8 +1400,10 @@ function setItemField(item, field, value) {
 
 app.addEventListener('change', (e) => {
   const t = e.target;
-  if (t.dataset.action === 'edit-kind') editorPicked('kind', t.value);
   if (t.dataset.action === 'edit-date') editorPicked('date', t.value);
+  if (t.dataset.action === 'edit-when') setDraftOption({ when: t.value });
+  if (t.dataset.action === 'edit-pick') setDraftOption({ [t.dataset.field]: t.value });
+  if (t.dataset.f === 'deadline') render(); // shows or hides the "Clear deadline" button
 });
 
 /* ---------- Helpers ---------- */

@@ -487,13 +487,74 @@ button { font: inherit; }
 
 /* In-place editor */
 .editor-bar {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
+  display: grid;
   gap: 16px;
-  flex-wrap: wrap;
   border-color: var(--sun);
 }
+/* Deadline: only the deadline line blinks, in the theme's danger colour. The task card stays as it was. */
+.deadline-tag {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: var(--danger);
+  background: rgba(255, 180, 168, 0.16);
+  border: 1px solid var(--danger);
+  animation: deadline-blink 1.6s ease-in-out infinite;
+}
+@keyframes deadline-blink {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 180, 168, 0); background: rgba(255, 180, 168, 0.16); }
+  50% { box-shadow: 0 0 0 3px rgba(255, 180, 168, 0.55), 0 0 14px rgba(255, 180, 168, 0.4); background: rgba(255, 180, 168, 0.4); }
+}
+.deadline-row { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
+.deadline-field { display: grid; gap: 4px; flex: 1 1 180px; font-size: 0.85rem; color: var(--ink-2); font-weight: 600; }
+.deadline-field input { min-height: 40px; }
+.day-pick { max-width: 280px; margin-top: 10px; }
+
+/* Editor: speak or type changes (the mic button sits at the top of the editor) */
+.editor-speak { justify-self: start; }
+.editor-speak .ghost { display: inline-flex; align-items: center; gap: 8px; }
+.editor-speak svg { width: 20px; height: 20px; flex: none; }
+
+/* Editor: "which schedule" chips and "when" option cards (in place of the old dropdown) */
+.scope-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  min-height: 40px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-line);
+  background: rgba(125, 255, 179, 0.06);
+  color: var(--ink);
+  font-weight: 600;
+  cursor: pointer;
+}
+.chip:hover, .chip:focus-visible { border-color: var(--mint); color: var(--mint); }
+.chip[aria-pressed="true"] { background: var(--mint); border-color: var(--mint); color: #02150c; font-weight: 800; }
+.when-list { display: grid; gap: 8px; }
+.when-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--panel-line);
+  border-radius: 12px;
+  background: var(--field);
+}
+.when-card.on { border-color: var(--sun); box-shadow: 0 0 0 2px rgba(255, 209, 102, 0.35); }
+.when-pick { display: flex; align-items: flex-start; gap: 12px; min-height: 44px; cursor: pointer; }
+.when-pick input[type="radio"] {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  flex: none;
+  margin-top: 3px;
+  accent-color: var(--mint);
+}
+.when-pick strong { display: block; font-weight: 700; }
+.when-pick small { display: block; margin-top: 2px; color: var(--ink-2); font-weight: 400; line-height: 1.4; }
+.when-card input[type="date"], .when-card input[type="month"] { max-width: 260px; margin-left: 30px; }
+input[type="month"] { color-scheme: dark; }
 .editor-bar .field.scope { min-width: min(320px, 100%); }
 .editor-bar .field span { font-size: 0.85rem; color: var(--ink-2); }
 select {
@@ -552,6 +613,28 @@ select {
 .schedule-edit-head p { margin: 2px 0 8px; }
 .schedule-edit .editing-list { margin: 0 0 8px; }
 .schedule-edit .empty { padding: 12px 0; color: var(--ink-2); }
+
+/* Speak or type changes: the check of a pasted schedule, and the AI instructions */
+.plan { display: grid; gap: 8px; padding: 12px 14px; border: 1px solid var(--mint); border-radius: 12px; background: rgba(125, 255, 179, 0.06); }
+.plan-list { margin: 0; padding-left: 1.2em; font-weight: 600; line-height: 1.5; }
+.plan-note { font-size: 0.92rem; }
+.plan .primary { justify-self: start; }
+.ai-help { border: 1px solid var(--panel-line); border-radius: 12px; padding: 10px 14px; }
+.ai-help summary { cursor: pointer; font-weight: 700; color: var(--mint); }
+.ai-help[open] { display: grid; gap: 8px; }
+.ai-help pre {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--ink-2);
+  background: var(--field);
+  padding: 10px;
+  border-radius: 10px;
+}
+.ai-help .ghost { justify-self: start; }
 
 /* Listening bar */
 .listening {

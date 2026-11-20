@@ -18,6 +18,17 @@ export function addDays(d, n) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
 }
 
+/** True for a calendar date key "YYYY-MM-DD". */
+export function isValidDateKey(s) {
+  return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
+
+/** The first date on or after a "YYYY-MM-DD" key that falls on a weekday (0 = Sunday), as a key. */
+export function nextWeekdayOnOrAfter(key, dow) {
+  const d = parseDateKey(key);
+  return dateKey(addDays(d, (dow - d.getDay() + 7) % 7));
+}
+
 export function isValidHHMM(s) {
   return typeof s === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(s);
 }
@@ -63,6 +74,13 @@ export function formatWeekday(d) {
 /** "Wednesday, 18th November" (no year). */
 export function formatDayLong(d) {
   return `${formatWeekday(d)}, ${formatDayMonth(d)}`;
+}
+
+/** "Wed, 25th Nov": short weekday and month names, no year. */
+export function formatDayShort(d) {
+  const weekday = d.toLocaleDateString(undefined, { weekday: 'short' });
+  const month = d.toLocaleDateString(undefined, { month: 'short' });
+  return `${weekday}, ${withOrdinal(d.getDate())} ${month}`;
 }
 
 /** Saturday and Sunday. */

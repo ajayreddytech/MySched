@@ -7,7 +7,7 @@
 //   { mode: 'full',  items: [{ start, end, title, description }] }
 //       -> this whole day is replaced.
 
-import { toMinutes } from './time.js';
+import { toMinutes, isValidDateKey } from './time.js';
 import { formatNotes, toTitleCase } from './text.js';
 
 /** Weekday names, indexed by getDay() (0 = Sunday). */
@@ -24,12 +24,15 @@ export const WEEKDAY_GROUPS = {
 };
 
 export function pickItem(i) {
-  return {
+  const item = {
     start: i.start,
     end: i.end || i.start,
     title: toTitleCase(i.title) || 'Untitled',
     description: formatNotes(i.description),
   };
+  // Optional deadline ("YYYY-MM-DD"). Only kept when set, so tasks without one stay as they were.
+  if (isValidDateKey(i.deadline)) item.deadline = i.deadline;
+  return item;
 }
 
 export function pickChange(c) {

@@ -25,3 +25,20 @@ test('weekend is Saturday and Sunday only', async () => {
   assert.equal(isWeekend(new Date(2026, 10, 15)), true); // Sunday
   assert.equal(isWeekend(new Date(2026, 10, 16)), false); // Monday
 });
+
+test('date keys are checked as YYYY-MM-DD', async () => {
+  const { isValidDateKey } = await import('../src/lib/time.js');
+  assert.equal(isValidDateKey('2026-11-23'), true);
+  assert.equal(isValidDateKey('2026-11-3'), false);
+  assert.equal(isValidDateKey(''), false);
+  assert.equal(isValidDateKey(undefined), false);
+});
+
+test('next weekday on or after a date', async () => {
+  const { nextWeekdayOnOrAfter } = await import('../src/lib/time.js');
+  // 2026-11-20 is a Friday. Monday is 1, Friday is 5.
+  assert.equal(nextWeekdayOnOrAfter('2026-11-20', 5), '2026-11-20'); // same day counts
+  assert.equal(nextWeekdayOnOrAfter('2026-11-20', 1), '2026-11-23'); // next Monday
+  assert.equal(nextWeekdayOnOrAfter('2026-11-20', 0), '2026-11-22'); // next Sunday
+  assert.equal(nextWeekdayOnOrAfter('2026-12-31', 1), '2027-01-04'); // crosses the year end
+});

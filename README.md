@@ -8,7 +8,7 @@ A single-page web app to speak your daily schedule and see it at a glance. The l
 - **Specific days** (say "tomorrow …", "on Friday …", "coming Tuesday …" or "November 24th …") change only the times you mention. All other days keep their weekly schedule.
 - **Firestore** stores everything and syncs live across all your devices.
 - **Netlify** hosts the static site.
-- **Installable app:** on a phone, use Add to Home Screen (or the install prompt). It opens full screen like a native app. On a phone signed in, the top-right menu holds Profile, Edit schedule, Add to schedule and Sign out.
+- **Installable app:** on a phone, use Add to Home Screen (or the install prompt). It opens full screen like a native app. On a phone signed in, the top-right menu holds Profile, Edit schedule and Sign out. Speaking or typing changes lives inside Edit schedule.
 
 Stack: Vite, vanilla JavaScript, Firebase Auth (Google), Cloud Firestore, Web Speech API.
 

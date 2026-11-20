@@ -91,3 +91,12 @@ test('a weekday uses the latest version that starts on or before the day', () =>
   assert.equal(scheduleVersionFor(versions, 3, '2026-11-20'), null);
   assert.equal(scheduleVersionFor(versions, 1, '2026-10-31'), null);
 });
+
+test('a deadline is kept when it is a valid date and dropped when empty', async () => {
+  const { pickItem } = await import('../src/lib/schedule.js');
+  const base = { start: '09:00', end: '10:00', title: 'Report', description: '' };
+  assert.equal(pickItem({ ...base, deadline: '2026-11-25' }).deadline, '2026-11-25');
+  assert.equal('deadline' in pickItem({ ...base, deadline: '' }), false);
+  assert.equal('deadline' in pickItem(base), false);
+  assert.equal('deadline' in pickItem({ ...base, deadline: 'soon' }), false);
+});
